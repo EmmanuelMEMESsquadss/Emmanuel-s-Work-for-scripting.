@@ -1,534 +1,526 @@
---[[ Enhanced Jujutsu Shenanigans AI with Smart/Aggressive modes ]]
-if not game.Players.LocalPlayer.PlayerScripts:FindFirstChild("Loaded") then
-	local data = Instance.new("NumberValue")
-	data.Name = "Loaded"
-	data.Parent = game.Players.LocalPlayer.PlayerScripts
-	print("Loaded Scripts")
+-- Smart POV Auto-Combat (Rayfield) | Final improved ai.lua
+-- For your own testing / your own game only (POV automation)
 
-	-- Rayfield UI
-	local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+-- ===== Services =====
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
+local UserInputService = game:GetService("UserInputService")
+local VIM = (pcall(function() return game:GetService("VirtualInputManager") end) and game:GetService("VirtualInputManager")) or nil
+local TweenService = game:GetService("TweenService")
 
-	-- Services & core refs
-	local Players = game:GetService("Players")
-	local RunService = game:GetService("RunService")
-	local PathfindingService = game:GetService("PathfindingService")
-	local UserInputService = game:GetService("UserInputService")
-	local TweenService = game:GetService("TweenService")
-	local workspace = game:GetService("Workspace")
+-- ===== Local player =====
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local hrp = character:WaitForChild("HumanoidRootPart")
 
-	local player = Players.LocalPlayer
-	local character = player.Character or player.CharacterAdded:Wait()
-	local humanoid = character:WaitForChild("Humanoid")
-	local hrp = character:WaitForChild("HumanoidRootPart")
+-- Update references on respawn
+player.CharacterAdded:Connect(function(chr)
+    character = chr
+    humanoid = character:WaitForChild("Humanoid")
+    hrp = character:WaitForChild("HumanoidRootPart")
+end)
 
-	-- Enhanced AI Configuration for Jujutsu Shenanigans
-	local AI_CONFIG = {
-		-- Behavior Settings
-		SMART_MODE = true,
-		
-		-- Smart Fighter Configuration
-		SMART_SETTINGS = {
-			REACTION_TIME = 0.15,
-			RETREAT_HEALTH = 30,
-			BLOCK_TIMING = 0.7,
-			DODGE_CHANCE = 0.6,
-			WALL_USAGE = true,
-			COMBO_PREDICTION = true,
-		},
-		
-		-- Aggressive Fighter Configuration
-		AGGRESSIVE_SETTINGS = {
-			REACTION_TIME = 0.05,
-			RETREAT_HEALTH = 10,
-			BLOCK_TIMING = 0.3,
-			DODGE_CHANCE = 0.2,
-			WALL_USAGE = false,
-			COMBO_PREDICTION = false,
-		},
-		
-		-- Combat Intelligence
-		PREDICTION_ACCURACY = 0.75,
-		DASH_USAGE = 0.6,
-		ENVIRONMENTAL_AWARENESS = true,
-	}
+-- ===== Rayfield UI (load) =====
+local Rayfield
+do
+    local ok
+    ok, Rayfield = pcall(function()
+        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+    end)
+    if not ok or not Rayfield then
+        -- fallback attempt: raw.githack mirror (some executors)
+        pcall(function()
+            Rayfield = loadstring(game:HttpGet("https://raw.githack.com/sirius/menu/main/rayfield"))()
+        end)
+    end
+    if not Rayfield then
+        warn("[Smart POV AI] Rayfield failed to load. UI will not appear. Check network/executor.")
+    end
+end
 
-	-- Combat States
-	local CombatState = {
-		IDLE = "Idle",
-		STALKING = "Stalking",
-		RUSHING = "Rushing",
-		ATTACKING = "Attacking",
-		BLOCKING = "Blocking", 
-		DODGING = "Dodging",
-		RETREATING = "Retreating"
-	}
+-- ===== Configuration / State =====
+local AutoCombat = false
+local UsePathfinding = true
+local DashDistance = 18          -- prefer dash when target further than this
+local MaxEngageDistance = 30
+local AttackRange = 4
+local MoveSpeed = 16
+local LeadFactor = 0.15
+local RepathInterval = 0.55
+local AimSmoothing = 10          -- higher = snappier camera
+local BackOffDistance = 6       -- how far to back off after hitting
+local BackOffTime = 0.45
+local StuckThreshold = 1.2
 
-	-- Known remote name patterns for Jujutsu Shenanigans
-	local KNOWN_ATTACK_REMOTE_PATTERNS = { 
-		"attack", "melee", "hit", "skill", "ability", "cast", "fire", "dash", "block", "combo", "m1", "special"
-	}
+-- Skill mapping and cooldowns
+local SkillKeys = {"One","Two","Three","Four","F","G"} -- 1..4 normal, F alt, G ultimate
+local KeyTimes = {One=2.5, Two=4, Three=6, Four=8, F=5, G=20}
+local Cooldowns = {}
 
-	-- Create main window
-	local Window = Rayfield:CreateWindow({
-		Name = "🥊 Jujutsu Shenanigans AI",
-		LoadingTitle = "Loading Combat AI",
-		LoadingSubtitle = "Enhanced Battlegrounds AI",
-		ShowText = "JS AI",
-		ConfigurationSaving = {
-			Enabled = true,
-			FolderName = "JujutsuAI", 
-			FileName = "CombatAI"
-		},
-		Discord = {
-			Enabled = false,
-		},
-		KeySystem = false
-	})
+-- Misc cooldowns
+local DashLast = 0
+local DashCooldown = 1.2
 
-	Rayfield:Notify({
-		Title = "🤖 Combat AI Loaded",
-		Content = "Smart & Aggressive fighting modes ready!",
-		Duration = 3
-	})
+-- UI proxy (live values)
+local UI = {
+    DashDistance = DashDistance,
+    MaxEngageDistance = MaxEngageDistance,
+    AttackRange = AttackRange,
+    UsePathfinding = UsePathfinding,
+    MoveSpeed = MoveSpeed,
+    LeadFactor = LeadFactor,
+    BackOffDistance = BackOffDistance,
+    BackOffTime = BackOffTime,
+    AimSmoothing = AimSmoothing,
+}
 
-	-- Tabs
-	local Tab = Window:CreateTab("Universal", 4483362458)
-	local AiTab = Window:CreateTab("🤖 Combat AI", 4483362458) 
-	local IntelligenceTab = Window:CreateTab("🧠 Intelligence", 4483362458)
+-- ===== Helpers =====
+local function canCast(key)
+    local last = Cooldowns[key]
+    if not last then return true end
+    return (tick() - last) >= (KeyTimes[key] or 1)
+end
 
-	-- Universal controls
-	local noclip = false
-	local speed = 16
-	Tab:CreateToggle({
-		Name = "Noclip",
-		CurrentValue = false,
-		Flag = "Nocliping",
-		Callback = function(Value)
-			noclip = Value
-		end,
-	})
-	Tab:CreateSlider({
-		Name = "Speed",
-		Range = {1, 100},
-		Increment = 1,
-		Suffix = "Speed",
-		CurrentValue = 16,
-		Flag = "UserSpeed",
-		Callback = function(Value)
-			speed = Value
-			if player.Character and player.Character:FindFirstChildOfClass("Humanoid") then
-				pcall(function()
-					player.Character:WaitForChild("Humanoid").WalkSpeed = Value
-				end)
-			end
-		end,
-	})
-	Tab:CreateToggle({
-		Name = "Xray (visual)",
-		CurrentValue = false,
-		Flag = "Xray",
-		Callback = function(Value)
-			for _,v in pairs(workspace:GetDescendants()) do
-				if v:IsA("BasePart") then
-					v.LocalTransparencyModifier = Value and 0.5 or 0
-				end
-			end
-		end,
-	})
+local function pressKey(key)
+    if not key then return end
+    if VIM and VIM.SendKeyEvent then
+        pcall(function()
+            VIM:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+            task.wait(0.06)
+            VIM:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+        end)
+    else
+        -- can't simulate key; warn once
+        warn("[Smart POV AI] VirtualInputManager not available. Key press won't be simulated in this executor.")
+    end
+end
 
-	-- Enhanced AI variables
-	local aiEnabled = false
-	local aiRange = 25
-	local approachDistance = 8  -- Combat distance for Jujutsu Shenanigans
-	local attackCooldown = 0.3   -- Faster for battlegrounds
-	local useAdvancedCombat = true
-	local usePathfinding = true
-	local combatBehavior = "Smart Fighter" -- or "Aggressive Rusher"
+local function mouseClickCenter()
+    if VIM and VIM.SendMouseButtonEvent and workspace.CurrentCamera then
+        pcall(function()
+            local view = workspace.CurrentCamera.ViewportSize
+            local cx, cy = view.X/2, view.Y/2
+            VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+            task.wait(0.03)
+            VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        end)
+    else
+        warn("[Smart POV AI] VirtualInputManager mouse event not available.")
+    end
+end
 
-	local aiTarget
-	local lastAttackTick = 0
-	local currentCombatState = CombatState.IDLE
-	local targetMovementHistory = {}
-	local predictedPosition = Vector3.new()
-	local dangerLevel = 0
-	local lastDashTime = 0
-	local comboCounter = 0
+local function getNearestEnemy(maxDist)
+    local nearest, dist = nil, maxDist or UI.MaxEngageDistance
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character:FindFirstChild("Humanoid") then
+            local targHRP = plr.Character.HumanoidRootPart
+            local mag = (hrp.Position - targHRP.Position).Magnitude
+            if mag < dist and plr.Character.Humanoid.Health > 0 then
+                nearest, dist = plr, mag
+            end
+        end
+    end
+    return nearest, dist
+end
 
-	-- Enhanced AI Tab
-	AiTab:CreateToggle({
-		Name = "🤖 Enable Combat AI",
-		CurrentValue = false,
-		Flag = "AIEnable",
-		Callback = function(val)
-			aiEnabled = val
-			if val then
-				Rayfield:Notify({Title="AI", Content="Combat AI Activated!", Duration=2})
-			else
-				currentCombatState = CombatState.IDLE
-				aiTarget = nil
-			end
-		end
-	})
+local function getAimPosition(targetHRP)
+    if not targetHRP then return hrp.Position end
+    local vel = Vector3.new(0,0,0)
+    if targetHRP.AssemblyLinearVelocity then vel = targetHRP.AssemblyLinearVelocity end
+    local aim = targetHRP.Position + vel * UI.LeadFactor
+    -- reduce vertical bias to avoid head-only focus
+    aim = Vector3.new(aim.X, targetHRP.Position.Y + 1.5, aim.Z)
+    return aim
+end
 
-	AiTab:CreateDropdown({
-		Name = "🎭 Fighting Style",
-		Options = {"Smart Fighter", "Aggressive Rusher"},
-		CurrentOption = "Smart Fighter",
-		Flag = "FightingStyle",
-		Callback = function(Option)
-			combatBehavior = Option
-			AI_CONFIG.SMART_MODE = (Option == "Smart Fighter")
-			Rayfield:Notify({Title="AI", Content="Style: " .. Option, Duration=2})
-		end,
-	})
+local function isInHitRange(targetHRP)
+    if not targetHRP then return false end
+    local dist = (hrp.Position - targetHRP.Position).Magnitude
+    return dist <= (UI.AttackRange + 0.6)
+end
 
-	AiTab:CreateSlider({
-		Name = "🎯 Detection Range",
-		Range = {10, 60},
-		Increment = 2,
-		CurrentValue = aiRange,
-		Flag = "AIRange",
-		Callback = function(v) aiRange = v end
-	})
+-- ===== Pathfinding state =====
+local currentPath = nil
+local currentWaypoints = {}
+local waypointIndex = 1
+local pathTarget = nil
+local lastPathTime = 0
+local lastPos = hrp.Position
+local stuckSince = nil
 
-	AiTab:CreateSlider({
-		Name = "⚔️ Combat Distance", 
-		Range = {3, 15},
-		Increment = 1,
-		CurrentValue = approachDistance,
-		Flag = "CombatDistance",
-		Callback = function(v) approachDistance = v end
-	})
+local function computePathAsync(targetPos)
+    if not targetPos then return false end
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentMaxSlope = 30,
+    })
+    local ok, err = pcall(function()
+        path:ComputeAsync(hrp.Position, targetPos)
+    end)
+    if not ok then return false end
+    if path.Status == Enum.PathStatus.Success then
+        currentPath = path
+        currentWaypoints = path:GetWaypoints()
+        waypointIndex = 1
+        pathTarget = targetPos
+        lastPathTime = tick()
+        return true
+    else
+        currentPath = nil
+        currentWaypoints = {}
+        waypointIndex = 1
+        return false
+    end
+end
 
-	AiTab:CreateSlider({
-		Name = "⚡ Attack Speed",
-		Range = {0.1, 1.0},
-		Increment = 0.05,
-		CurrentValue = attackCooldown,
-		Flag = "AttackSpeed",
-		Callback = function(v) attackCooldown = v end
-	})
+local function followPathStep()
+    if not currentPath or #currentWaypoints == 0 then return false end
+    local wp = currentWaypoints[waypointIndex]
+    if not wp then return false end
 
-	AiTab:CreateToggle({
-		Name = "🧠 Advanced Combat",
-		CurrentValue = useAdvancedCombat,
-		Flag = "AdvancedCombat",
-		Callback = function(v) 
-			useAdvancedCombat = v
-			AI_CONFIG.ENVIRONMENTAL_AWARENESS = v
-		end
-	})
+    if wp.Action == Enum.PathWaypointAction.Jump then
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
 
-	-- Intelligence Configuration Tab
-	IntelligenceTab:CreateSection("🎯 Prediction Settings")
+    humanoid:MoveTo(wp.Position)
+    if (hrp.Position - wp.Position).Magnitude <= 2.5 then
+        waypointIndex = waypointIndex + 1
+        if waypointIndex > #currentWaypoints then
+            currentPath = nil
+            currentWaypoints = {}
+            waypointIndex = 1
+            return true
+        end
+    end
+    return true
+end
 
-	IntelligenceTab:CreateSlider({
-		Name = "🔮 Movement Prediction",
-		Range = {0.1, 1.0},
-		Increment = 0.05,
-		CurrentValue = AI_CONFIG.PREDICTION_ACCURACY,
-		Flag = "PredictionAccuracy",
-		Callback = function(v) AI_CONFIG.PREDICTION_ACCURACY = v end
-	})
+local function simpleChase(targetPos)
+    humanoid:MoveTo(targetPos)
+end
 
-	IntelligenceTab:CreateSlider({
-		Name = "💨 Dash Usage Rate",
-		Range = {0.1, 1.0},
-		Increment = 0.05,
-		CurrentValue = AI_CONFIG.DASH_USAGE,
-		Flag = "DashUsage", 
-		Callback = function(v) AI_CONFIG.DASH_USAGE = v end
-	})
+local function detectAndResolveStuck()
+    local now = tick()
+    if (hrp.Position - lastPos).Magnitude > 0.45 then
+        stuckSince = nil
+        lastPos = hrp.Position
+        return
+    end
 
-	IntelligenceTab:CreateSection("🥊 Combat Behavior")
+    if not stuckSince then
+        stuckSince = now
+    elseif (now - stuckSince) > StuckThreshold then
+        -- small jump + short sidestep (non-teleport)
+        humanoid.Jump = true
+        local angle = math.rad(math.random(0,360))
+        local offset = Vector3.new(math.cos(angle)*3, 0, math.sin(angle)*3)
+        local tryPos = hrp.Position + offset
+        -- attempt MoveTo to new nearby position
+        humanoid:MoveTo(tryPos)
+        stuckSince = nil
+        lastPos = hrp.Position
+    end
+end
 
-	IntelligenceTab:CreateSlider({
-		Name = "⚡ Smart Reaction Time",
-		Range = {0.05, 0.5},
-		Increment = 0.01,
-		CurrentValue = AI_CONFIG.SMART_SETTINGS.REACTION_TIME,
-		Flag = "SmartReaction",
-		Callback = function(v) AI_CONFIG.SMART_SETTINGS.REACTION_TIME = v end
-	})
+local function tryDashIfNeeded(dist)
+    if not UI.DashDistance then return end
+    if dist > UI.DashDistance and dist <= UI.MaxEngageDistance then
+        if (tick() - DashLast) >= DashCooldown then
+            pressKey("Q")
+            DashLast = tick()
+        end
+    end
+end
 
-	IntelligenceTab:CreateSlider({
-		Name = "🔥 Aggressive Reaction Time", 
-		Range = {0.01, 0.3},
-		Increment = 0.01,
-		CurrentValue = AI_CONFIG.AGGRESSIVE_SETTINGS.REACTION_TIME,
-		Flag = "AggressiveReaction",
-		Callback = function(v) AI_CONFIG.AGGRESSIVE_SETTINGS.REACTION_TIME = v end
-	})
+-- Attack state / hit-and-run
+local lastAttack = 0
+local backOffUntil = 0
 
-	IntelligenceTab:CreateSlider({
-		Name = "🛡️ Block Timing (Smart)",
-		Range = {0.1, 1.0},
-		Increment = 0.05,
-		CurrentValue = AI_CONFIG.SMART_SETTINGS.BLOCK_TIMING,
-		Flag = "BlockTiming",
-		Callback = function(v) AI_CONFIG.SMART_SETTINGS.BLOCK_TIMING = v end
-	})
+local function doBackOffFrom(targetHRP)
+    if not targetHRP then return end
+    local dir = (hrp.Position - targetHRP.Position)
+    if dir.Magnitude < 0.001 then dir = Vector3.new(0,0,1) end
+    local backpos = hrp.Position + dir.Unit * (UI.BackOffDistance or BackOffDistance)
+    backOffUntil = tick() + (UI.BackOffTime or BackOffTime)
+    humanoid:MoveTo(backpos)
+end
 
-	IntelligenceTab:CreateToggle({
-		Name = "🧱 Environmental Usage",
-		CurrentValue = AI_CONFIG.ENVIRONMENTAL_AWARENESS,
-		Flag = "Environmental",
-		Callback = function(v) AI_CONFIG.ENVIRONMENTAL_AWARENESS = v end
-	})
+local function tryAttack(target, dist)
+    if not target or not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then return end
+    local tHRP = target.Character.HumanoidRootPart
 
-	-- Target selection button
-	AiTab:CreateButton({
-		Name = "🎯 Lock Nearest Target",
-		Callback = function()
-			local found, d = getNearestPlayerWithin(aiRange)
-			if found then
-				aiTarget = found
-				Rayfield:Notify({Title="🎯 Target", Content=("Locked: %s (%.1f studs)"):format(found.Name, d), Duration=3})
-			else
-				Rayfield:Notify({Title="❌ No Target", Content="No valid enemies in range", Duration=2})
-			end
-		end
-	})
+    -- if in forced backoff, don't attack
+    if backOffUntil > tick() then
+        return
+    end
 
-	-- Character/respawn handling
-	local function refreshCharacterRefs()
-		character = player.Character or player.CharacterAdded:Wait()
-		humanoid = character:WaitForChild("Humanoid")
-		hrp = character:WaitForChild("HumanoidRootPart")
-	end
-	player.CharacterAdded:Connect(function() task.wait(0.1); refreshCharacterRefs() end)
+    -- If in hit range -> use melee skills + M1
+    if isInHitRange(tHRP) then
+        -- prefer using normal moveset 1-4 first when available
+        for i=1,4 do
+            local key = SkillKeys[i]
+            if key and canCast(key) then
+                pressKey(key)
+                Cooldowns[key] = tick()
+                lastAttack = tick()
+                task.wait(0.09)
+                mouseClickCenter()
+                -- trigger backoff (hit and run)
+                doBackOffFrom(tHRP)
+                return
+            end
+        end
 
-	-- Enhanced target finding with intelligence
-	function getNearestPlayerWithin(range)
-		local best, bestDist = nil, math.huge
-		if not hrp then return nil end
-		for _,plr in pairs(Players:GetPlayers()) do
-			if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-				local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-				if hum and hum.Health > 0 then
-					local targetHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-					if targetHRP then
-						local d = (targetHRP.Position - hrp.Position).Magnitude
-						if d < bestDist and d <= range then
-							best = plr; bestDist = d
-						end
-					end
-				end
-			end
-		end
-		return best, bestDist
-	end
+        -- fallback primary attack click
+        mouseClickCenter()
+        lastAttack = tick()
+        doBackOffFrom(tHRP)
+    else
+        -- not in melee range: try to cast ranged / gap-closing skills (F, G)
+        for i=5, #SkillKeys do
+            local key = SkillKeys[i]
+            if key and canCast(key) then
+                pressKey(key)
+                Cooldowns[key] = tick()
+                -- after ranged, try to close distance slightly
+                lastAttack = tick()
+                return
+            end
+        end
+    end
+end
 
-	-- Enhanced movement prediction
-	local function updateTargetPrediction(targetPlayer)
-		if not targetPlayer or not targetPlayer.Character then return end
-		
-		local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not targetHRP then return end
-		
-		-- Store movement history
-		local currentPos = targetHRP.Position
-		table.insert(targetMovementHistory, {pos = currentPos, time = tick()})
-		
-		-- Keep only recent history  
-		if #targetMovementHistory > 10 then
-			table.remove(targetMovementHistory, 1)
-		end
-		
-		-- Calculate predicted position
-		if #targetMovementHistory >= 2 then
-			local recent = targetMovementHistory[#targetMovementHistory]
-			local previous = targetMovementHistory[#targetMovementHistory - 1]
-			local velocity = (recent.pos - previous.pos) / (recent.time - previous.time)
-			
-			local reactionTime = AI_CONFIG.SMART_MODE and AI_CONFIG.SMART_SETTINGS.REACTION_TIME or AI_CONFIG.AGGRESSIVE_SETTINGS.REACTION_TIME
-			predictedPosition = currentPos + (velocity * reactionTime * AI_CONFIG.PREDICTION_ACCURACY)
-		else
-			predictedPosition = currentPos
-		end
-	end
+local function aimAtTarget(tHRP, dt)
+    if not tHRP or not workspace.CurrentCamera then return end
+    local aimPos = getAimPosition(tHRP)
+    local cam = workspace.CurrentCamera
+    local cur = cam.CFrame
+    local targetCFrame = CFrame.new(cur.Position, aimPos)
+    local alpha = math.clamp((UI.AimSmoothing or AimSmoothing) * dt, 0.04, 0.7)
+    local newCFrame = cur:Lerp(targetCFrame, alpha)
+    pcall(function()
+        cam.CFrame = newCFrame
+    end)
+end
 
-	-- Danger assessment for smart AI
-	local function assessDanger(targetPlayer)
-		if not targetPlayer or not targetPlayer.Character then return 0 end
-		
-		local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not targetHRP or not hrp then return 0 end
-		
-		local distance = (hrp.Position - targetHRP.Position).Magnitude
-		local healthPercent = humanoid.Health / humanoid.MaxHealth
-		
-		local danger = 0
-		
-		-- Distance danger
-		if distance < 5 then danger = danger + 0.7
-		elseif distance < 10 then danger = danger + 0.4
-		elseif distance < 15 then danger = danger + 0.2
-		
-		-- Health danger
-		if healthPercent < 0.2 then danger = danger + 0.8
-		elseif healthPercent < 0.5 then danger = danger + 0.4
-		
-		-- Environmental dangers (walls, obstacles)
-		if AI_CONFIG.ENVIRONMENTAL_AWARENESS then
-			local raycast = workspace:Raycast(hrp.Position, (targetHRP.Position - hrp.Position).Unit * 8)
-			if raycast then danger = danger + 0.3 end
-		end
-		
-		return math.min(danger, 1.0)
-	end
+-- ===== Main AI heartbeat loop =====
+RunService.Heartbeat:Connect(function(dt)
+    -- refresh references if respawn occurred
+    if not player or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+        return
+    end
+    if humanoid.Health <= 0 then return end
 
-	-- Enhanced combat state management
-	local function updateCombatState(targetPlayer)
-		if not targetPlayer or not targetPlayer.Character then 
-			currentCombatState = CombatState.IDLE
-			return
-		end
-		
-		local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not targetHRP then return end
-		
-		local distance = (hrp.Position - targetHRP.Position).Magnitude
-		dangerLevel = assessDanger(targetPlayer)
-		
-		local config = AI_CONFIG.SMART_MODE and AI_CONFIG.SMART_SETTINGS or AI_CONFIG.AGGRESSIVE_SETTINGS
-		
-		if AI_CONFIG.SMART_MODE then
-			-- Smart Fighter Logic
-			if humanoid.Health < config.RETREAT_HEALTH then
-				currentCombatState = CombatState.RETREATING
-			elseif dangerLevel > config.BLOCK_TIMING and math.random() < 0.6 then
-				currentCombatState = CombatState.BLOCKING
-			elseif dangerLevel > config.DODGE_CHANCE and math.random() < 0.4 then
-				currentCombatState = CombatState.DODGING
-			elseif distance > approachDistance + 3 then
-				currentCombatState = CombatState.STALKING
-			elseif distance <= approachDistance then
-				currentCombatState = CombatState.ATTACKING
-			else
-				currentCombatState = CombatState.STALKING
-			end
-		else
-			-- Aggressive Fighter Logic
-			if humanoid.Health < config.RETREAT_HEALTH then
-				currentCombatState = CombatState.RETREATING
-			elseif distance > approachDistance + 5 then
-				currentCombatState = CombatState.RUSHING
-			elseif distance <= approachDistance then
-				currentCombatState = CombatState.ATTACKING
-			else
-				currentCombatState = CombatState.RUSHING
-			end
-		end
-	end
+    -- apply live UI values to local variables for behavior
+    humanoid.WalkSpeed = UI.MoveSpeed or MoveSpeed
 
-	-- Face target with smooth rotation
-	local function faceTarget(targetPos, smoothing)
-		if not hrp or not targetPos then return end
-		smoothing = smoothing or 0.1
-		
-		local myPos = hrp.Position
-		local lookDirection = Vector3.new(targetPos.X, myPos.Y, targetPos.Z)
-		local targetCFrame = CFrame.new(myPos, lookDirection)
-		
-		pcall(function()
-			hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, smoothing)
-		end)
-	end
+    if not AutoCombat then
+        -- reset path while idle
+        currentPath = nil
+        currentWaypoints = {}
+        waypointIndex = 1
+        return
+    end
 
-	-- Enhanced attack system
-	local function performEnhancedAttack(targetPlayer)
-		if not targetPlayer or not targetPlayer.Character then return end
-		
-		local now = tick()
-		if now - lastAttackTick < attackCooldown then return end
-		lastAttackTick = now
-		
-		local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not targetHRP then return end
-		
-		-- Face predicted position for smart mode
-		local facePos = AI_CONFIG.SMART_MODE and predictedPosition or targetHRP.Position
-		faceTarget(facePos, 0.15)
-		
-		-- Enhanced attack sequence
-		if useAdvancedCombat then
-			-- Try combo system for Jujutsu Shenanigans
-			comboCounter = comboCounter + 1
-			
-			-- M1 combo simulation
-			for i = 1, (AI_CONFIG.SMART_MODE and 3 or 4) do
-				-- Try tool activation
-				local tool = character:FindFirstChildOfClass("Tool") or player.Backpack:FindFirstChildOfClass("Tool")
-				if tool then
-					pcall(function() tool:Activate() end)
-				end
-				
-				-- Fire attack remotes
-				for _,obj in ipairs(game:GetDescendants()) do
-					if obj:IsA("RemoteEvent") then
-						local lname = obj.Name:lower()
-						for _,pattern in ipairs(KNOWN_ATTACK_REMOTE_PATTERNS) do
-							if lname:find(pattern) then
-								pcall(function()
-									obj:FireServer(targetPlayer)
-									obj:FireServer(targetHRP)
-								end)
-								break
-							end
-						end
-					end
-				end
-				
-				-- Combo timing
-				if i < (AI_CONFIG.SMART_MODE and 3 or 4) then
-					task.wait(0.15)
-				end
-			end
-			
-			-- Reset combo after sequence
-			if comboCounter >= 4 then
-				comboCounter = 0
-			end
-		else
-			-- Basic attack
-			local tool = character:FindFirstChildOfClass("Tool")
-			if tool then
-				pcall(function() tool:Activate() end)
-			end
-		end
-	end
+    -- find target
+    local target, dist = getNearestEnemy(UI.MaxEngageDistance)
+    if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+        local tHRP = target.Character.HumanoidRootPart
 
-	-- Enhanced dash system
-	local function performDash(targetPlayer)
-		local now = tick()
-		if now - lastDashTime < 1.5 then return end -- Dash cooldown
-		
-		if math.random() > AI_CONFIG.DASH_USAGE then return end
-		
-		local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not targetHRP then return end
-		
-		-- Dash toward predicted position
-		local dashTarget = AI_CONFIG.SMART_MODE and predictedPosition or targetHRP.Position
-		local direction = (dashTarget - hrp.Position).Unit
-		
-		-- Try dash remotes
-		for _,obj in ipairs(game:GetDescendants()) do
-			if obj:IsA("RemoteEvent") and obj.Name:lower():find("dash") then
-				pcall(function() obj:FireServer() end)
-				break
-			end
-		end
-		
-		-- Movement dash
-		humanoid:MoveTo(hrp.Position + direction * 12)
-		lastDashTime = now
-	end
+        -- camera smoothing aim
+        pcall(aimAtTarget, tHRP, dt)
 
-	-- Advanced pathfinding movement
-	local function moveToPositionAdvanced(targetPos, stopDistance, usePrediction)
-		stopDistance = stopDistance or 2
-		if not humanoid or not hrp then return end
-		
-		local finalTarget = usePrediction and predictedPosition or targetPos
+        -- dash logic
+        tryDashIfNeeded(dist)
+
+        -- movement / pathfinding / chase (repath occasionally)
+        if UI.UsePathfinding then
+            local needRepath = false
+            if not currentPath then needRepath = true end
+            if tick() - lastPathTime > RepathInterval then needRepath = true end
+            if pathTarget and (pathTarget - tHRP.Position).Magnitude > 6 then needRepath = true end
+
+            if needRepath then
+                lastPathTime = tick()
+                -- compute async but not block; small pcall
+                pcall(function() computePathAsync(tHRP.Position) end)
+            end
+
+            if currentPath and #currentWaypoints > 0 then
+                followPathStep()
+            else
+                simpleChase(tHRP.Position)
+            end
+        else
+            simpleChase(tHRP.Position)
+        end
+
+        -- attack behavior
+        tryAttack(target, dist)
+
+        -- unstuck detection
+        detectAndResolveStuck()
+    else
+        -- no valid target: stop moving and clear path
+        humanoid:MoveTo(hrp.Position)
+        currentPath = nil
+        currentWaypoints = {}
+        waypointIndex = 1
+    end
+end)
+
+-- ===== Rayfield UI Elements (if available) =====
+if Rayfield then
+    local Window = Rayfield:CreateWindow({
+        Name = "Smart POV AI",
+        LoadingTitle = "Smart Combat",
+        LoadingSubtitle = "W112ND - POV",
+        ConfigurationSaving = {Enabled = false},
+        KeySystem = false,
+    })
+    local AITab = Window:CreateTab("AI", 4483362458)
+    AITab:CreateSection("Main Controls")
+
+    AITab:CreateToggle({
+        Name = "Enable Auto Combat",
+        CurrentValue = AutoCombat,
+        Flag = "AutoCombat",
+        Callback = function(Value)
+            AutoCombat = Value
+            Rayfield:Notify({
+                Title = "Auto Combat",
+                Content = AutoCombat and "✅ Activated" or "❌ Stopped",
+                Duration = 2
+            })
+            if not AutoCombat then
+                -- reset movement state
+                currentPath = nil
+                currentWaypoints = {}
+                waypointIndex = 1
+                backOffUntil = 0
+            end
+        end
+    })
+
+    AITab:CreateToggle({
+        Name = "Use Pathfinding",
+        CurrentValue = UI.UsePathfinding,
+        Flag = "UsePath",
+        Callback = function(Value) UI.UsePathfinding = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "Max Engage Distance",
+        Range = {8, 60},
+        Increment = 1,
+        Suffix = "studs",
+        CurrentValue = UI.MaxEngageDistance,
+        Flag = "MaxDist",
+        Callback = function(Value) UI.MaxEngageDistance = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "Dash Distance",
+        Range = {6, 40},
+        Increment = 1,
+        Suffix = "studs",
+        CurrentValue = UI.DashDistance,
+        Flag = "DashDist",
+        Callback = function(Value) UI.DashDistance = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "Attack Range",
+        Range = {1, 10},
+        Increment = 0.5,
+        Suffix = "studs",
+        CurrentValue = UI.AttackRange,
+        Flag = "AttackRange",
+        Callback = function(Value) UI.AttackRange = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "Move Speed",
+        Range = {8, 40},
+        Increment = 1,
+        Suffix = "WS",
+        CurrentValue = UI.MoveSpeed,
+        Flag = "MoveSpeed",
+        Callback = function(Value) UI.MoveSpeed = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "Lead Factor (predictive aim)",
+        Range = {0, 1},
+        Increment = 0.01,
+        CurrentValue = UI.LeadFactor,
+        Flag = "LeadFactor",
+        Callback = function(Value) UI.LeadFactor = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "BackOff Distance",
+        Range = {2, 12},
+        Increment = 0.5,
+        CurrentValue = UI.BackOffDistance,
+        Flag = "BackOff",
+        Callback = function(Value) UI.BackOffDistance = Value end
+    })
+
+    AITab:CreateSlider({
+        Name = "BackOff Time",
+        Range = {0.15, 1.2},
+        Increment = 0.05,
+        CurrentValue = UI.BackOffTime,
+        Flag = "BackOffTime",
+        Callback = function(Value) UI.BackOffTime = Value end
+    })
+
+    AITab:CreateButton({
+        Name = "Force Cast Ultimate (G)",
+        Callback = function()
+            pressKey("G")
+            Rayfield:Notify({Title = "Manual", Content = "Forced Ultimate [G]", Duration = 2})
+        end
+    })
+
+    AITab:CreateLabel("Hotkey: K to toggle Auto Combat")
+end
+
+-- hotkey for quick toggling
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.K then
+        AutoCombat = not AutoCombat
+        if Rayfield then
+            Rayfield:Notify({
+                Title = "Auto Combat",
+                Content = AutoCombat and "✅ Activated (Hotkey)" or "❌ Stopped (Hotkey)",
+                Duration = 2
+            })
+        else
+            print("AutoCombat:", AutoCombat)
+        end
+        if not AutoCombat then
+            currentPath = nil
+            currentWaypoints = {}
+            waypointIndex = 1
+            backOffUntil = 0
+        end
+    end
+end)
+
+-- final load notice
+if Rayfield then
+    Rayfield:Notify({
+        Title = "Loaded",
+        Content = "Smart POV AI ready. Tweak sliders and enable Auto Combat.",
+        Duration = 4
+    })
+else
+    print("[Smart POV AI] Loaded without Rayfield UI. Use hotkey K to toggle Auto Combat.")
+end
