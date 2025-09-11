@@ -1,21 +1,14 @@
--- Enhanced POV Auto-Combat (No Pathfinding) | JJK testing AI (client-side)
--- Features:
---  - No Pathfinding (removed)
---  - Hitbox-like predictive blocking
---  - State machine: aggressive / attack / backoff / circle / defensive / retreat / stuck
---  - Camera-independent (doesn't rely on you looking at target)
---  - Dash/sidestep unstuck instead of spam-jumping
---  - Optional Rayfield UI (won't abort if Rayfield fails)
--- Put into your executor and test in your own environment.
+-- Smart NPC-style POV Combat (no pathfinding)
+-- For private testing only. Controls YOUR character to behave like an NPC bot.
+-- Features: state machine, hitbox-based blocking, hit-and-run, no camera dependence.
 
 -- ===== Services =====
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local VIM = (pcall(function() return game:GetService("VirtualInputManager") end) and game:GetService("VirtualInputManager")) or nil
 
--- ===== Local player refs (auto-updates on respawn) =====
+-- ===== Local player refs =====
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
@@ -27,64 +20,50 @@ player.CharacterAdded:Connect(function(chr)
     hrp = character:WaitForChild("HumanoidRootPart")
 end)
 
--- ===== Try load Rayfield but do NOT return if it fails =====
-local Rayfield = nil
+-- ===== UI (try Rayfield, fallback) =====
+local Rayfield
 do
     local ok
     ok, Rayfield = pcall(function()
         return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
     end)
     if not ok or not Rayfield then
-        -- Try alternate raw mirror (may or may not exist)
+        -- sometimes raw.githack or raw.githubusercontent mirrors help; try one fallback quietly
         pcall(function()
             Rayfield = loadstring(game:HttpGet("https://raw.githack.com/sirius/menu/main/rayfield"))()
         end)
     end
-    if not Rayfield then
-        warn("[POV AI] Rayfield UI failed to load. Script will continue without UI.")
-    end
 end
 
--- ===== CONFIG (change these if needed) =====
+-- ===== Config (tweakable) =====
 local AutoCombat = false
-local UsePathfinding = false -- explicitly removed pathfinding
-local MaxEngageDistance = 35
-local AttackRange = 4.5
-local MoveSpeed = 16
-local LeadFactor = 0.12          -- for predictive blocking/aim
-local RepathInterval = 0.6       -- unused but kept for compatibility
-local StuckThreshold = 1.1
-local DashCooldown = 1.0
 
--- Blocking / defensive parameters
-local HealthThreshold = 30       -- % to go defensive
-local CriticalHealth = 12        -- % to retreat entirely
-local BlockWindow = 0.35         -- seconds: if predicted collision in < this -> block
-local BlockRange = 8             -- distance to consider block
-local RetreatDistance = 20
-local BackOffDistance = 8
-local BackOffTime = 0.6
-local CircleDuration = 1.0       -- seconds to circle after backoff
-local CircleRadius = 4.0
-local CircleSpeed = 14
+local UI = {
+    MaxEngageDistance = 35,   -- overall detection radius
+    AttackRange = 4.5,        -- melee hit range
+    AggressiveDistance = 5.0, -- desired distance when healthy
+    DefensiveDistance = 9.0,  -- desired distance when low health
+    BackOffDistance = 8.0,    -- how far to back off after attack
+    BackOffTime = 0.55,       -- how long to stay backing off
+    MoveSpeed = 16,           -- humanoid walk speed used
+    DashKey = "Q",            -- dash key (press via VIM)
+    BlockKey = "F",           -- block key
+    UltKey = "G",             -- ultimate
+    LeadFactor = 0.15,        -- predictive aiming factor (used for aim logic if needed)
+    HealthThreshold = 35,     -- percent -> defensive mode
+    CriticalHealth = 14,      -- percent -> retreat mode
+    BlockDistance = 7.0,      -- how close enemy hitbox must be to consider blocking
+    BlockVelocityThreshold = 10, -- enemy velocity magnitude threshold suggesting attack
+    BlockHoldTime = 0.35,     -- hold block for this long when triggered
+    StuckThreshold = 1.1,     -- seconds to consider stuck
+}
 
--- Skill mapping
-local SkillKeys = {"One","Two","Three","Four","F","G"} -- F used for block, G ultimate, Q dash
-local KeyTimes = {One=2.5, Two=4, Three=6, Four=8, F=0.8, G=20, Q=1.0}
+-- Skill cooldowns and tracking
+local SkillKeys = {"One","Two","Three","Four","F","G","R","Q"}
+local KeyTimes = {One=2.5, Two=4, Three=6, Four=8, F=5, G=22, R=3, Q=0.5}
 local Cooldowns = {}
 
--- ===== STATE =====
-local AIState = "idle"     -- idle, approach, attack, backoff, circle, defensive, retreat, stuck
-local targetPlayer = nil
-local targetDist = math.huge
-local lastPos = hrp.Position
-local stuckSince = nil
-local backOffUntil = 0
-local circleUntil = 0
-local lastAttack = 0
-local lastDash = 0
-
--- ===== HELPERS =====
+-- ===== Helpers =====
 local function now() return tick() end
 
 local function canCast(key)
@@ -101,13 +80,14 @@ local function pressKey(key)
     if not key then return end
     if VIM and VIM.SendKeyEvent then
         pcall(function()
-            local code = Enum.KeyCode[key] or Enum.KeyCode.Unknown
-            VIM:SendKeyEvent(true, code, false, game)
+            VIM:SendKeyEvent(true, Enum.KeyCode[key], false, game)
             task.wait(0.06)
-            VIM:SendKeyEvent(false, code, false, game)
+            VIM:SendKeyEvent(false, Enum.KeyCode[key], false, game)
         end)
     else
-        warn("[POV AI] VirtualInputManager not available; key simulation may not work.")
+        -- fallback: notify user that their executor may not simulate keypresses
+        -- (we don't error; attacks may still work with mouseClick fallback)
+        warn("[SmartNPC] VIM not available — key '"..tostring(key).."' may not fire on this executor.")
     end
 end
 
@@ -121,419 +101,405 @@ local function mouseClickCenter()
             VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
         end)
     else
-        warn("[POV AI] VIM mouse event not available or no camera.")
+        -- fallback: try to fire a Mouse1 event if your executor exposes one — we warn instead.
+        warn("[SmartNPC] Mouse click simulation unavailable.")
     end
 end
 
--- Returns nearest player within maxDist. Also returns their distance.
+-- get nearest enemy player within maxDist
 local function getNearestEnemy(maxDist)
-    maxDist = maxDist or MaxEngageDistance
-    local nearest = nil
-    local bestDist = maxDist + 1
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character:FindFirstChild("Humanoid") then
-            local hr = plr.Character.HumanoidRootPart
-            local hum = plr.Character.Humanoid
+    maxDist = maxDist or UI.MaxEngageDistance
+    local best, bestDist = nil, maxDist + 0.01
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= player and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") and pl.Character:FindFirstChild("Humanoid") then
+            local targHRP = pl.Character.HumanoidRootPart
+            local hum = pl.Character:FindFirstChild("Humanoid")
             if hum and hum.Health > 0 then
-                local d = (hrp.Position - hr.Position).Magnitude
-                if d < bestDist and d <= maxDist then
+                local d = (hrp.Position - targHRP.Position).Magnitude
+                if d < bestDist then
                     bestDist = d
-                    nearest = plr
+                    best = pl
                 end
             end
         end
     end
-    return nearest, bestDist
+    return best, bestDist
+end
+
+-- Find likely attack parts in the enemy: name heuristics (hitbox, weapon, attack)
+local function getAttackParts(character)
+    local parts = {}
+    for _, obj in ipairs(character:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local n = obj.Name:lower()
+            if n:find("hit") or n:find("hurt") or n:find("atk") or n:find("weapon") or n:find("attack") then
+                table.insert(parts, obj)
+            end
+        end
+    end
+    return parts
+end
+
+-- Is there an attack part near our HRP? (direct hitbox detection)
+local function anyAttackPartNear(enemy, radius)
+    radius = radius or UI.BlockDistance
+    if not enemy or not enemy.Character then return false end
+    local parts = getAttackParts(enemy.Character)
+    for _, p in ipairs(parts) do
+        if p and p:IsA("BasePart") and p.Position then
+            if (hrp.Position - p.Position).Magnitude <= radius then
+                return true, p
+            end
+        end
+    end
+    return false, nil
+end
+
+-- Aggressive incoming movement detection: enemy HRP velocity pointing toward us & speed > threshold
+local function isEnemyRushing(enemy)
+    if not enemy or not enemy.Character then return false end
+    local eHRP = enemy.Character:FindFirstChild("HumanoidRootPart")
+    if not eHRP then return false end
+    local vel = eHRP.AssemblyLinearVelocity or Vector3.new()
+    local speed = vel.Magnitude
+    if speed < UI.BlockVelocityThreshold then return false end
+    -- compute projection of velocity onto vector to us (positive means moving toward us)
+    local toUs = (hrp.Position - eHRP.Position)
+    if toUs.Magnitude < 0.1 then return true end
+    local proj = (vel:Dot(toUs.Unit))
+    return proj > (UI.BlockVelocityThreshold * 0.35) -- some tolerance
 end
 
 local function getHealthPercent()
-    if not humanoid or humanoid.MaxHealth == 0 then return 100 end
-    return (humanoid.Health / humanoid.MaxHealth) * 100
+    if not humanoid or not humanoid.Health or not humanoid.MaxHealth then return 100 end
+    return (humanoid.Health / math.max(1, humanoid.MaxHealth)) * 100
 end
 
--- Predictive "hitbox" check: if enemy is moving towards us and is likely to intersect our HRP soon.
--- This is our hitbox-like blocking detection (doesn't require camera).
-local function predictIncomingHit(enemyPlr)
-    if not enemyPlr or not enemyPlr.Character or not enemyPlr.Character:FindFirstChild("HumanoidRootPart") then return false end
-    local eHRP = enemyPlr.Character.HumanoidRootPart
-    local rel = hrp.Position - eHRP.Position
-    local relDist = rel.Magnitude
-    if relDist > BlockRange then return false end
-
-    local eVel = Vector3.new(0,0,0)
-    if eHRP.AssemblyLinearVelocity then eVel = eHRP.AssemblyLinearVelocity end
-    local relVel = eVel -- since our local movement small relative
-
-    local speed = relVel.Magnitude
-    if speed < 1.0 then return false end
-
-    -- Project time to collision (approx)
-    local approachSpeed = math.max(0.001, relVel:Dot(rel.Unit) * -1) -- component towards us
-    if approachSpeed <= 0 then return false end
-    local timeToContact = relDist / approachSpeed
-    if timeToContact <= BlockWindow then
-        -- also check facing: is enemy roughly facing us?
-        local eLook = eHRP.CFrame.LookVector
-        local toUs = (hrp.Position - eHRP.Position).Unit
-        local facingDot = eLook:Dot(toUs)
-        if facingDot > 0.35 then
-            return true
-        end
+-- choose an optimal desired position relative to the target
+local function getOptimalPosition(targetHRP)
+    if not targetHRP then return hrp.Position end
+    local health = getHealthPercent()
+    local desiredDistance = UI.AggressiveDistance
+    if health <= UI.CriticalHealth then
+        desiredDistance = UI.BackOffDistance + 2
+    elseif health <= UI.HealthThreshold then
+        desiredDistance = UI.DefensiveDistance
+    else
+        desiredDistance = UI.AggressiveDistance
     end
-    return false
-end
 
--- Try block immediately (F key used for block by default)
-local function tryBlock()
-    if canCast("F") then
-        pressKey("F")
-        recordCast("F")
-        return true
+    -- direction from target to us (we want to stand at desiredDistance in that direction)
+    local dir = (hrp.Position - targetHRP.Position)
+    if dir.Magnitude < 0.5 then
+        dir = Vector3.new(0,0,1)
     end
-    return false
+    local pos = targetHRP.Position + dir.Unit * desiredDistance
+    -- keep feet level (Y) to target HRP
+    pos = Vector3.new(pos.X, targetHRP.Position.Y, pos.Z)
+    return pos
 end
 
--- Attack decision: pick an available skill given distance and health
+-- select a skill for situation
 local lastSkillUsed = nil
-local function chooseSkill(distance)
-    local hp = getHealthPercent()
-    -- Emergency / escape ultimate
-    if hp <= CriticalHealth and canCast("G") then return "G" end
-
-    -- If close, prefer melee keys in a cycle
-    if distance <= AttackRange + 0.5 then
+local function selectSkill(dist, healthPct)
+    -- emergency ultimate if critical
+    if healthPct <= UI.CriticalHealth and canCast("G") then return "G" end
+    -- at close range: use the normal 1-4 moveset (prefer ones not used recently)
+    if dist <= UI.AttackRange + 0.5 then
         for _, k in ipairs({"One","Two","Three","Four"}) do
             if canCast(k) and lastSkillUsed ~= k then
                 return k
             end
         end
-    else
-        -- mid-range: F (range skill) or special fallback
-        if canCast("F") then return "F" end
+        -- if all same used, fall back to One if available
         if canCast("One") then return "One" end
     end
+    -- mid/long range: try F or R
+    if dist > UI.AttackRange and canCast("F") then return "F" end
+    if canCast("R") then return "R" end
     return nil
 end
 
-local function doBackOffFromTarget(tHRP)
-    if not tHRP then return end
-    local dir = (hrp.Position - tHRP.Position)
-    if dir.Magnitude < 0.1 then dir = Vector3.new(0,0,1) end
-    local backDist = BackOffDistance
+-- Back off behavior
+local backOffUntil = 0
+local function doBackOffFrom(targetHRP)
+    if not targetHRP then return end
+    local dir = (hrp.Position - targetHRP.Position)
+    if dir.Magnitude < 0.001 then dir = Vector3.new(0,0,1) end
+    local backDist = math.max(3, UI.BackOffDistance)
     local backpos = hrp.Position + dir.Unit * backDist
-    backOffUntil = now() + BackOffTime
-    humanoid:MoveTo(Vector3.new(backpos.X, hrp.Position.Y, backpos.Z))
-    -- small dash as escape if available
-    if (now() - lastDash) >= DashCooldown and canCast("Q") then
-        pressKey("Q"); recordCast("Q"); lastDash = now()
-    end
+    backOffUntil = now() + (UI.BackOffTime or 0.5)
+    humanoid:MoveTo(backpos)
 end
 
-local function startCircleAround(tHRP)
-    if not tHRP then return end
-    circleUntil = now() + CircleDuration
-    -- set a temporary faster walk speed for circle
-    humanoid.WalkSpeed = CircleSpeed
-    -- we'll compute positions during the main loop
-end
-
--- Sidestep to escape / unstuck
-local function sidestepEscape()
-    if (now() - lastDash) >= DashCooldown and canCast("Q") then
-        pressKey("Q"); recordCast("Q"); lastDash = now()
-        return
-    end
-    -- fallback small lateral move
-    local angle = math.rad(math.random(0,360))
-    local offset = Vector3.new(math.cos(angle)*3, 0, math.sin(angle)*3)
-    humanoid:MoveTo(hrp.Position + offset)
-end
-
--- Clean reset states
-local function resetStates()
-    AIState = "idle"
-    targetPlayer = nil
-    targetDist = math.huge
-    stuckSince = nil
-    backOffUntil = 0
-    circleUntil = 0
-    lastAttack = 0
-    lastSkillUsed = nil
-    humanoid.WalkSpeed = MoveSpeed
-end
-
--- Attack execution: press skill, then click center to try to register hit
-local function executeAttack(skillKey, tHRP)
-    if not skillKey then return end
-    pressKey(skillKey)
-    recordCast(skillKey)
-    lastSkillUsed = skillKey
-    lastAttack = now()
-
-    -- slight wait for animation
-    task.wait(0.08)
-    mouseClickCenter()
-    -- after attack, we want to back off a bit if melee or if low health
-    if skillKey == "G" or getHealthPercent() <= HealthThreshold then
-        if tHRP then doBackOffFromTarget(tHRP) end
-        startCircleAround(tHRP)
-    else
-        -- for normal melee, small chance to back off-and-strike again
-        doBackOffFromTarget(tHRP)
-    end
-end
-
--- ===== Main AI loop (no pathfinding) =====
-RunService.Heartbeat:Connect(function(dt)
-    -- maintain refs
-    if not player or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
-    if not humanoid or humanoid.Health <= 0 then return end
-
-    -- update movement speed base
-    humanoid.WalkSpeed = MoveSpeed
-
-    -- find nearest target
-    local targ, dist = getNearestEnemy(MaxEngageDistance)
-    targetPlayer = targ
-    targetDist = dist or math.huge
-
-    -- health states
-    local healthPct = getHealthPercent()
-    local isCritical = healthPct <= CriticalHealth
-    local isDefensive = healthPct <= HealthThreshold
-
-    -- unstuck detection
+-- Stuck detection & resolve
+local lastPos = hrp.Position
+local stuckSince = nil
+local lastUnstuck = 0
+local function detectAndResolveStuck()
+    local t = now()
     if (hrp.Position - lastPos).Magnitude > 0.45 then
         stuckSince = nil
         lastPos = hrp.Position
-    else
-        if not stuckSince then stuckSince = now() end
-        if stuckSince and (now() - stuckSince) > StuckThreshold then
-            AIState = "stuck"
+        return
+    end
+    if not stuckSince then stuckSince = t return end
+    if (t - stuckSince) > UI.StuckThreshold then
+        -- try dash escape if available
+        if canCast(UI.DashKey) and (t - lastUnstuck) > 1.2 then
+            pressKey(UI.DashKey)
+            recordCast(UI.DashKey)
+            lastUnstuck = t
+        else
+            humanoid.Jump = true
+            local angle = math.rad(math.random(0,360))
+            local offset = Vector3.new(math.cos(angle)*4, 0, math.sin(angle)*4)
+            humanoid:MoveTo(hrp.Position + offset)
         end
+        stuckSince = nil
+        lastPos = hrp.Position
+    end
+end
+
+-- Blocking action
+local lastBlockTime = 0
+local function triggerBlock()
+    if (now() - lastBlockTime) < 0.15 then return end
+    if canCast(UI.BlockKey) then
+        pressKey(UI.BlockKey)
+        recordCast(UI.BlockKey)
+        lastBlockTime = now()
+    end
+end
+
+-- Attack execution
+local function performAttack(target, dist)
+    if not target or not target.Character then return end
+    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+    if not tHRP then return end
+    local hp = getHealthPercent()
+
+    -- select skill
+    local sk = selectSkill(dist, hp)
+    if sk then
+        pressKey(sk)
+        recordCast(sk)
+        lastSkillUsed = sk
+        -- slight wait for animation then click center to confirm
+        task.wait(0.09)
+        mouseClickCenter()
+        -- back off if low or used heavy skill
+        if hp <= UI.HealthThreshold or sk == "G" then
+            doBackOffFrom(tHRP)
+        end
+        return true
     end
 
-    -- check for incoming hits and block by hitbox-like detection
-    if targetPlayer and predictIncomingHit(targetPlayer) then
-        tryBlock()
+    -- fallback: if in hit range, click M1
+    if dist <= UI.AttackRange + 0.4 then
+        mouseClickCenter()
+        if getHealthPercent() <= UI.HealthThreshold then
+            doBackOffFrom(tHRP)
+        end
+        return true
     end
 
-    -- if AI disabled, reset and skip behavior
-    if not AutoCombat then
-        resetStates()
+    return false
+end
+
+-- ===== State Machine variables =====
+local state = "Idle" -- Idle, Chase, Attack, Block, BackOff, Retreat
+local currentTarget = nil
+local lastTargetDist = math.huge
+local blockHoldUntil = 0
+
+-- ===== Main loop (single Heartbeat connection) =====
+RunService.Heartbeat:Connect(function(dt)
+    -- refresh sanity references
+    if not player or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+        -- wait for char to exist next tick
         return
     end
 
-    -- state transitions & actions
-    if AIState == "stuck" then
-        -- try dash/sidestep to unstuck
-        sidestepEscape()
-        stuckSince = nil
-        AIState = "idle"
-    end
+    -- update humanoid speed live
+    humanoid.WalkSpeed = UI.MoveSpeed
 
-    if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        local tHRP = targetPlayer.Character.HumanoidRootPart
-
-        -- forced retreat when critical
-        if isCritical then
-            AIState = "retreat"
-            local retreatDir = (hrp.Position - tHRP.Position)
-            if retreatDir.Magnitude < 0.1 then retreatDir = Vector3.new(0,0,1) end
-            local retreatPos = hrp.Position + retreatDir.Unit * RetreatDistance
-            humanoid:MoveTo(Vector3.new(retreatPos.X, hrp.Position.Y, retreatPos.Z))
-            -- dash once to help escape
-            if (now() - lastDash) >= DashCooldown and canCast("Q") then
-                pressKey("Q"); recordCast("Q"); lastDash = now()
-            end
-            return
-        end
-
-        -- Defensive mode: maintain distance and block more
-        if isDefensive then
-            AIState = "defensive"
-            -- maintain DefensiveDistance (use BackOffDistance)
-            local desired = BackOffDistance + 2
-            if targetDist < desired then
-                -- move backward from target
-                local movePos = hrp.Position + (hrp.Position - tHRP.Position).Unit * (desired - targetDist + 0.5)
-                humanoid:MoveTo(Vector3.new(movePos.X, hrp.Position.Y, movePos.Z))
-            else
-                -- small strafe to avoid being predictable
-                local perp = Vector3.new(-(tHRP.Position - hrp.Position).Z, 0, (tHRP.Position - hrp.Position).X).Unit
-                local strafeTarget = hrp.Position + perp * 2
-                humanoid:MoveTo(Vector3.new(strafeTarget.X, hrp.Position.Y, strafeTarget.Z))
-            end
-
-            -- attempt opportunistic skills from distance
-            if canCast("F") and targetDist <= 12 then
-                executeAttack("F", tHRP)
-            end
-
-            return
-        end
-
-        -- Normal aggressive logic
-        -- If currently in backoff period, keep backing off and possibly circle
-        if backOffUntil > now() then
-            -- keep moving to previously set MoveTo (do nothing, MoveTo will continue)
-            if circleUntil > now() then
-                -- circle movement: compute a point on circle around target
-                local dir = (hrp.Position - tHRP.Position)
-                if dir.Magnitude < 0.1 then dir = Vector3.new(0,0,1) end
-                local base = tHRP.Position + dir.Unit * (CircleRadius + 1)
-                -- rotate around target slightly based on time
-                local angle = (now() % 6) * 2.0
-                local offset = Vector3.new(math.cos(angle)*CircleRadius, 0, math.sin(angle)*CircleRadius)
-                humanoid:MoveTo(Vector3.new(base.X + offset.X, hrp.Position.Y, base.Z + offset.Z))
-            end
-            return
-        end
-
-        -- If close enough, attempt attack
-        if targetDist <= AttackRange + 0.6 then
-            AIState = "attack"
-            local skill = chooseSkill(targetDist)
-            if skill then
-                executeAttack(skill, tHRP)
-                -- set a backoff window after an attack
-                backOffUntil = now() + BackOffTime
-                circleUntil = now() + CircleDuration
-                return
-            else
-                -- no skill available, fallback to M1 clicking
-                mouseClickCenter()
-                lastAttack = now()
-                backOffUntil = now() + (BackOffTime * 0.6)
-                circleUntil = now() + (CircleDuration * 0.6)
-                return
-            end
-        else
-            -- not in range => approach but with smarter movement
-            AIState = "approach"
-            -- desired approach distance: a bit more aggressive than AttackRange so we get inside quickly
-            local desiredDistance = AttackRange * 0.9
-            -- compute a position that's desiredDistance from the target along the vector from target to us
-            local dir = (hrp.Position - tHRP.Position)
-            if dir.Magnitude < 0.1 then dir = Vector3.new(0,0,1) end
-            local approachPos = tHRP.Position + dir.Unit * desiredDistance
-            humanoid:MoveTo(Vector3.new(approachPos.X, hrp.Position.Y, approachPos.Z))
-            -- close-gap dash if far
-            if targetDist > (AttackRange + 6) and (now() - lastDash) >= DashCooldown and canCast("Q") then
-                pressKey("Q"); recordCast("Q"); lastDash = now()
-            end
-            return
-        end
-    else
-        -- no target found: idle roam or stand still
-        AIState = "idle"
+    -- reset early if disabled
+    if not AutoCombat then
+        state = "Idle"
+        currentTarget = nil
         humanoid:MoveTo(hrp.Position)
         return
     end
+
+    if humanoid.Health <= 0 then
+        -- dead -> do nothing
+        state = "Idle"
+        return
+    end
+
+    -- choose target
+    local tgt, d = getNearestEnemy(UI.MaxEngageDistance)
+    currentTarget = tgt
+    local dist = d or math.huge
+
+    -- health states
+    local hpct = getHealthPercent()
+    local retreatMode = (hpct <= UI.CriticalHealth)
+    local defensiveMode = (hpct <= UI.HealthThreshold) and not retreatMode
+
+    -- emergency retreat behavior
+    if retreatMode and currentTarget and currentTarget.Character and currentTarget.Character:FindFirstChild("HumanoidRootPart") then
+        local tHRP = currentTarget.Character.HumanoidRootPart
+        local away = hrp.Position + (hrp.Position - tHRP.Position).Unit * (UI.BackOffDistance + 6)
+        humanoid:MoveTo(away)
+        state = "Retreat"
+        -- attempt dash if available
+        if canCast(UI.DashKey) then
+            pressKey(UI.DashKey)
+            recordCast(UI.DashKey)
+        end
+        detectAndResolveStuck()
+        return
+    end
+
+    -- If we have a target inside engage distance:
+    if currentTarget and dist <= UI.MaxEngageDistance then
+        local tHRP = currentTarget.Character and currentTarget.Character:FindFirstChild("HumanoidRootPart")
+        if not tHRP then
+            state = "Idle"
+            return
+        end
+
+        -- 1) Block detection: prefer hitbox-based detection when possible
+        local attackPartNearby, victimPart = anyAttackPartNear(currentTarget, UI.BlockDistance)
+        local rushing = isEnemyRushing(currentTarget)
+        if attackPartNearby or rushing then
+            -- Enter block state and hold for BlockHoldTime
+            triggerBlock()
+            blockHoldUntil = now() + UI.BlockHoldTime
+            state = "Block"
+            -- we still try to step back a little to avoid followup
+            humanoid:MoveTo(hrp.Position + (hrp.CFrame.LookVector * -1.5))
+            detectAndResolveStuck()
+            return
+        end
+
+        -- If still in Block hold window, keep blocking/moving slightly
+        if now() < blockHoldUntil then
+            state = "Block"
+            -- keep a small back-move to avoid follow-up
+            humanoid:MoveTo(hrp.Position + (hrp.CFrame.LookVector * -1.2))
+            detectAndResolveStuck()
+            return
+        end
+
+        -- 2) BackOff window: if recently backed off, wait until backOffUntil
+        if now() < backOffUntil then
+            state = "BackOff"
+            detectAndResolveStuck()
+            return
+        end
+
+        -- 3) When within attack range => attempt attack
+        if dist <= UI.AttackRange + 0.6 then
+            local ok = performAttack(currentTarget, dist)
+            if ok then
+                state = "Attack"
+                detectAndResolveStuck()
+                return
+            else
+                -- can't attack (cooldowns) -> small reposition
+                local opt = getOptimalPosition(tHRP)
+                humanoid:MoveTo(opt)
+                state = "Chase"
+                detectAndResolveStuck()
+                return
+            end
+        end
+
+        -- 4) Not in attack range -> chase to optimal position
+        local optimalPos = getOptimalPosition(tHRP)
+        humanoid:MoveTo(optimalPos)
+        state = "Chase"
+        detectAndResolveStuck()
+        return
+    else
+        -- No target found: idle
+        state = "Idle"
+        humanoid:MoveTo(hrp.Position)
+        detectAndResolveStuck()
+        return
+    end
 end)
 
--- ===== UI (optional Rayfield) =====
-local uiWindow
-if Rayfield then
-    uiWindow = Rayfield:CreateWindow({
-        Name = "POV Combat AI (No Pathfinding)",
-        LoadingTitle = "POV AI",
-        LoadingSubtitle = "Testing AI - POV",
+-- ===== UI + hotkeys =====
+local function setUpUI()
+    if not Rayfield then
+        print("[SmartNPC] Rayfield not loaded; using hotkey K to toggle AutoCombat. Tweak variables in script.")
+        return
+    end
+
+    local Window = Rayfield:CreateWindow({
+        Name = "Smart NPC POV AI",
+        LoadingTitle = "Smart NPC Combat",
+        LoadingSubtitle = "POV AI - no pathfinding",
         ConfigurationSaving = {Enabled = false},
         KeySystem = false,
     })
-    local tab = uiWindow:CreateTab("AI", 4483362458)
-    tab:CreateSection("Main Controls")
-    tab:CreateToggle({
+
+    local Tab = Window:CreateTab("Combat AI", 4483362458)
+    Tab:CreateSection("Main Controls")
+    Tab:CreateToggle({
         Name = "Enable Auto Combat",
         CurrentValue = AutoCombat,
         Flag = "AutoCombat",
-        Callback = function(Value)
-            AutoCombat = Value
-            if AutoCombat then
-                Rayfield:Notify({Title = "POV AI", Content = "✅ Auto Combat Enabled", Duration = 2})
-            else
-                resetStates()
-                Rayfield:Notify({Title = "POV AI", Content = "❌ Auto Combat Disabled", Duration = 2})
+        Callback = function(val)
+            AutoCombat = val
+            Rayfield:Notify({Title = "SmartNPC", Content = AutoCombat and "✅ Activated" or "❌ Stopped", Duration = 2})
+            if not AutoCombat then
+                -- reset movement & state
+                humanoid:MoveTo(hrp.Position)
+                state = "Idle"
+                backOffUntil = 0
             end
         end
     })
-    tab:CreateSlider({
-        Name = "Max Engage Distance",
-        Range = {6, 120},
-        Increment = 1,
-        Suffix = "studs",
-        CurrentValue = MaxEngageDistance,
-        Flag = "MaxDist",
-        Callback = function(Value) MaxEngageDistance = Value end
-    })
-    tab:CreateSlider({
-        Name = "Attack Range",
-        Range = {1, 12},
-        Increment = 0.5,
-        Suffix = "studs",
-        CurrentValue = AttackRange,
-        Flag = "AttackRange",
-        Callback = function(Value) AttackRange = Value end
-    })
-    tab:CreateSlider({
-        Name = "BackOff Distance",
-        Range = {2, 16},
-        Increment = 0.5,
-        Suffix = "studs",
-        CurrentValue = BackOffDistance,
-        Flag = "BackOffDistance",
-        Callback = function(Value) BackOffDistance = Value end
-    })
-    tab:CreateSlider({
-        Name = "Health Threshold (Defensive)",
-        Range = {5, 80},
-        Increment = 1,
-        Suffix = "%",
-        CurrentValue = HealthThreshold,
-        Flag = "HealthThreshold",
-        Callback = function(Value) HealthThreshold = Value end
-    })
-    tab:CreateSlider({
-        Name = "Critical Health (Retreat)",
-        Range = {1, 40},
-        Increment = 1,
-        Suffix = "%",
-        CurrentValue = CriticalHealth,
-        Flag = "CriticalHealth",
-        Callback = function(Value) CriticalHealth = Value end
-    })
-    tab:CreateSection("Manual Controls")
-    tab:CreateButton({
-        Name = "Force Block (F)",
-        Callback = function() pressKey("F"); recordCast("F") end
-    })
-    tab:CreateButton({
-        Name = "Force Dash (Q)",
-        Callback = function() pressKey("Q"); recordCast("Q") end
-    })
-    tab:CreateLabel("Hotkey: K to toggle Auto Combat")
+
+    Tab:CreateSlider({Name="Max Engage Distance", Range={8,80}, Increment=1, CurrentValue=UI.MaxEngageDistance, Callback=function(v) UI.MaxEngageDistance=v end})
+    Tab:CreateSlider({Name="Attack Range", Range={1,12}, Increment=0.5, CurrentValue=UI.AttackRange, Callback=function(v) UI.AttackRange=v end})
+    Tab:CreateSlider({Name="Aggressive Distance", Range={1,12}, Increment=0.5, CurrentValue=UI.AggressiveDistance, Callback=function(v) UI.AggressiveDistance=v end})
+    Tab:CreateSlider({Name="Defensive Distance", Range={4,20}, Increment=0.5, CurrentValue=UI.DefensiveDistance, Callback=function(v) UI.DefensiveDistance=v end})
+    Tab:CreateSlider({Name="BackOff Distance", Range={2,18}, Increment=0.5, CurrentValue=UI.BackOffDistance, Callback=function(v) UI.BackOffDistance=v end})
+    Tab:CreateSlider({Name="Health Threshold (Defensive %)", Range={5,80}, Increment=1, CurrentValue=UI.HealthThreshold, Callback=function(v) UI.HealthThreshold=v end})
+    Tab:CreateSlider({Name="Critical Health (Retreat %)", Range={2,50}, Increment=1, CurrentValue=UI.CriticalHealth, Callback=function(v) UI.CriticalHealth=v end})
+    Tab:CreateSlider({Name="Block Distance", Range={2,16}, Increment=0.5, CurrentValue=UI.BlockDistance, Callback=function(v) UI.BlockDistance=v end})
+    Tab:CreateSlider({Name="Block Speed Threshold", Range={2,40}, Increment=0.5, CurrentValue=UI.BlockVelocityThreshold, Callback=function(v) UI.BlockVelocityThreshold=v end})
+    Tab:CreateSection("Manual Controls")
+    Tab:CreateButton({Name="Force Block (F)", Callback=function() pressKey("F"); Rayfield:Notify({Title="Manual", Content="Block pressed", Duration=1}) end})
+    Tab:CreateButton({Name="Force Dash (Q)", Callback=function() pressKey("Q"); Rayfield:Notify({Title="Manual", Content="Dash pressed", Duration=1}) end})
+    Tab:CreateButton({Name="Force Ult (G)", Callback=function() pressKey("G"); Rayfield:Notify({Title="Manual", Content="Ult pressed", Duration=1}) end})
+    Tab:CreateLabel("Hotkey: K toggles Auto Combat")
 end
 
--- ===== Hotkey =====
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.K then
+setUpUI()
+
+-- hotkey K toggles
+UserInputService.InputBegan:Connect(function(inp, processed)
+    if processed then return end
+    if inp.KeyCode == Enum.KeyCode.K then
         AutoCombat = not AutoCombat
         if Rayfield then
-            Rayfield:Notify({Title = "POV AI", Content = AutoCombat and "✅ Toggled ON" or "❌ Toggled OFF", Duration = 2})
+            Rayfield:Notify({Title="SmartNPC", Content=AutoCombat and "✅ Activated (Hotkey)" or "❌ Stopped (Hotkey)", Duration=2})
         else
-            print("[POV AI] AutoCombat toggled:", AutoCombat)
+            print("[SmartNPC] AutoCombat:", AutoCombat)
         end
         if not AutoCombat then
-            resetStates()
+            humanoid:MoveTo(hrp.Position)
+            state = "Idle"
+            backOffUntil = 0
         end
     end
 end)
 
--- ===== Final notice =====
-if Rayfield then
-    Rayfield:Notify({Title = "POV AI Loaded", Content = "No-path AI initialized. K toggles combat.", Duration = 4})
-else
-    print("[POV AI] Loaded without Rayfield. Press K to toggle AutoCombat.")
-end
+print("[SmartNPC] Loaded. Use K to toggle AutoCombat. Rayfield:", Rayfield ~= nil)
