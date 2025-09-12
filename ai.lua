@@ -407,6 +407,69 @@ function disableESP()
 	end
 end
 
+-- ESP Functions (Kept - These are useful)
+function enableESP()
+	for _, otherPlayer in pairs(Players:GetPlayers()) do
+		if otherPlayer ~= player and otherPlayer.Character then
+			addESPToPlayer(otherPlayer)
+		end
+	end
+	
+	-- Add ESP to new players
+	Players.PlayerAdded:Connect(function(newPlayer)
+		if espEnabled then
+			newPlayer.CharacterAdded:Connect(function()
+				task.wait(1)
+				if espEnabled then
+					addESPToPlayer(newPlayer)
+				end
+			end)
+		end
+	end)
+end
+
+function addESPToPlayer(targetPlayer)
+	if not targetPlayer.Character then return end
+	
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "PlayerESP"
+	highlight.Adornee = targetPlayer.Character
+	highlight.FillColor = Color3.new(1, 0, 0)
+	highlight.OutlineColor = Color3.new(1, 1, 1)
+	highlight.FillTransparency = 0.5
+	highlight.OutlineTransparency = 0
+	highlight.Parent = targetPlayer.Character
+	
+	-- Add name tag
+	local billboardGui = Instance.new("BillboardGui")
+	billboardGui.Name = "NameESP"
+	billboardGui.Adornee = targetPlayer.Character:FindFirstChild("Head")
+	billboardGui.Size = UDim2.new(0, 200, 0, 50)
+	billboardGui.StudsOffset = Vector3.new(0, 3, 0)
+	billboardGui.AlwaysOnTop = true
+	billboardGui.Parent = targetPlayer.Character
+	
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Text = targetPlayer.Name
+	textLabel.TextColor3 = Color3.new(1, 1, 1)
+	textLabel.TextScaled = true
+	textLabel.Font = Enum.Font.GothamBold
+	textLabel.Parent = billboardGui
+end
+
+function disableESP()
+	for _, otherPlayer in pairs(Players:GetPlayers()) do
+		if otherPlayer.Character then
+			local highlight = otherPlayer.Character:FindFirstChild("PlayerESP")
+			local nameTag = otherPlayer.Character:FindFirstChild("NameESP")
+			if highlight then highlight:Destroy() end
+			if nameTag then nameTag:Destroy() end
+		end
+	end
+end
+
 -- Utility Functions
 function findNearestPlayer()
 	if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
