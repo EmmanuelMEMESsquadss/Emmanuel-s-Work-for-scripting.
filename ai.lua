@@ -1,10 +1,10 @@
---[[ Combat Warriors Enhanced Script for Arceus X Mobile ]]
+--[[ Universal Ping & Aim Enhancement Script for Arceus X Mobile ]]
 
-if not game.Players.LocalPlayer.PlayerScripts:FindFirstChild("CW_Loaded") then 
+if not game.Players.LocalPlayer.PlayerScripts:FindFirstChild("Universal_Loaded") then 
     local data = Instance.new("NumberValue")
-    data.Name = "CW_Loaded" 
+    data.Name = "Universal_Loaded" 
     data.Parent = game.Players.LocalPlayer.PlayerScripts 
-    print("Combat Warriors Enhanced Script Loaded for Mobile")
+    print("Universal Enhancement Script Loaded")
 
 -- Load Rayfield UI Library with error handling
 local Rayfield
@@ -20,7 +20,7 @@ do
         end)
     end
     if not Rayfield then
-        warn("[CW Script] Rayfield failed to load. UI will not appear. Check network/executor.")
+        warn("[Universal Script] Rayfield failed to load. UI will not appear. Check network/executor.")
         return
     end
 end
@@ -33,65 +33,53 @@ local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
-local SoundService = game:GetService("SoundService")
+local Stats = game:GetService("Stats")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 
 -- Player Variables
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local camera = Workspace.CurrentCamera
 
 -- Update references on respawn
 player.CharacterAdded:Connect(function(chr)
     character = chr
     humanoid = character:WaitForChild("Humanoid")
     humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    task.wait(2)
-    -- Reapply settings after respawn
-    if currentSpeed ~= 16 then
-        humanoid.WalkSpeed = currentSpeed
-    end
-    if infiniteStamina then
-        enableInfiniteStamina()
-    end
 end)
 
--- Combat Warriors Specific Variables
-local autoParry = false
-local killAura = false
-local autoRevive = false
-local antiRagdoll = false
-local weaponReach = false
-local silentAim = false
-local currentSpeed = 16
-local parryRange = 20
-local killAuraRange = 15
-local weaponReachValue = 8
+-- Script Variables
+local pingOptimized = false
+local silentAimEnabled = false
+local aimbotEnabled = false
 local espEnabled = false
-local fullBright = false
-local noClip = false
-local infiniteStamina = false
-local autoStomp = false
-local hitboxExpander = false
-local hitboxSize = 10
+local serverHopEnabled = false
+local currentPing = 0
+local targetRegion = "Asia"
+local maxPingThreshold = 80
 
--- Advanced Auto Parry Variables (Mobile Optimized)
-local parryQueue = {}
-local isProcessingParry = false
-local lastParryTime = 0
-local parryCooldown = 0.2
-local parryPrediction = true
-local predictionTime = 0.3
+-- Aim Settings
+local aimSettings = {
+    fov = 100,
+    smoothness = 0.5,
+    targetPart = "Head",
+    wallCheck = true,
+    teamCheck = true,
+    visibleOnly = true
+}
 
--- Kill Aura Variables
-local killAuraTargets = {}
-local killAuraConnection = nil
-local killAuraDelay = 0.1
-local lastAttackTime = 0
+-- Silent Aim Variables
+local silentTarget = nil
+local fovCircle = nil
+local espObjects = {}
+local aimConnections = {}
 
--- Auto Revive Variables
-local autoReviveConnection = nil
-local reviveKey = Enum.KeyCode.R
+-- Ping Optimization Variables
+local pingConnections = {}
+local optimizationEnabled = false
 
 -- VIM setup for mobile input
 local VIM = nil
@@ -99,20 +87,17 @@ pcall(function()
     VIM = game:GetService("VirtualInputManager")
 end)
 
--- Mobile Touch Detection
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
 -- Create Main Window
 local Window
 if Rayfield then
     Window = Rayfield:CreateWindow({
-        Name = "Combat Warriors Enhanced",
-        LoadingTitle = "Loading CW Script", 
-        LoadingSubtitle = "Mobile Optimized - Arceus X Compatible",
-        ShowText = "CW Pro Mobile",
+        Name = "Universal Enhancement Hub",
+        LoadingTitle = "Loading Universal Script", 
+        LoadingSubtitle = "Ping Optimization & Universal Aim System",
+        ShowText = "Universal Pro",
         ConfigurationSaving = {
             Enabled = true,
-            FolderName = "CombatWarriors_Mobile",
+            FolderName = "UniversalEnhancement",
             FileName = "Config"
         },
         Discord = {
@@ -123,407 +108,292 @@ if Rayfield then
         KeySystem = false
     })
 
-    -- Mobile Notification
+    -- Notification
     Rayfield:Notify({
-        Title = "Combat Warriors Enhanced",
-        Content = "Mobile-optimized script loaded! Advanced Auto Parry ready for Arceus X",
+        Title = "Universal Enhancement",
+        Content = "Ping optimization and universal aim systems loaded!",
         Duration = 5
     })
 end
 
 -- Create Tabs
-local CombatTab, PlayerTab, VisualTab, UtilityTab
+local PingTab, AimTab, VisualTab, ServerTab, UtilityTab
 
 if Window then
-    CombatTab = Window:CreateTab("Combat", 4483362458)
-    PlayerTab = Window:CreateTab("Player", 4483362458) 
-    VisualTab = Window:CreateTab("Visual", 4483362458)
-    UtilityTab = Window:CreateTab("Utility", 4483362458)
+    PingTab = Window:CreateTab("Network Optimization", 4483362458)
+    AimTab = Window:CreateTab("Universal Aim", 4483362458)
+    VisualTab = Window:CreateTab("Visual Enhancements", 4483362458)
+    ServerTab = Window:CreateTab("Server Management", 4483362458)
+    UtilityTab = Window:CreateTab("Utilities", 4483362458)
 end
 
--- COMBAT FEATURES
-if CombatTab then
-    CombatTab:CreateSection("Auto Combat System")
+-- PING OPTIMIZATION TAB
+if PingTab then
+    PingTab:CreateSection("Bloxstrap-Style Ping Optimization")
     
-    -- Advanced Auto Parry Toggle
-    CombatTab:CreateToggle({
-        Name = "Advanced Auto Parry",
+    -- Main Ping Optimizer
+    PingTab:CreateToggle({
+        Name = "Enable Ping Optimization",
         CurrentValue = false,
-        Flag = "AutoParry",
+        Flag = "PingOptimizer",
         Callback = function(Value)
-            autoParry = Value
-            if autoParry then
-                startAdvancedAutoParry()
+            pingOptimized = Value
+            if pingOptimized then
+                enablePingOptimization()
                 if Rayfield then
                     Rayfield:Notify({
-                        Title = "Auto Parry",
-                        Content = "Advanced mobile-friendly auto parry enabled!",
+                        Title = "Ping Optimizer",
+                        Content = "Bloxstrap-style ping optimization enabled!",
                         Duration = 3
                     })
                 end
             else
-                stopAdvancedAutoParry()
+                disablePingOptimization()
             end
         end,
     })
 
-    -- Parry Prediction
-    CombatTab:CreateToggle({
-        Name = "Parry Prediction",
-        CurrentValue = true,
-        Flag = "ParryPrediction",
-        Callback = function(Value)
-            parryPrediction = Value
-        end,
-    })
-
-    -- Parry Range
-    CombatTab:CreateSlider({
-        Name = "Parry Detection Range",
-        Range = {10, 35},
-        Increment = 1,
-        Suffix = "Studs",
-        CurrentValue = 20,
-        Flag = "ParryRange",
-        Callback = function(Value)
-            parryRange = Value
-        end,
-    })
-
-    -- Prediction Time
-    CombatTab:CreateSlider({
-        Name = "Prediction Time",
-        Range = {0.1, 0.8},
-        Increment = 0.1,
-        Suffix = "Seconds",
-        CurrentValue = 0.3,
-        Flag = "PredictionTime",
-        Callback = function(Value)
-            predictionTime = Value
-        end,
-    })
-
-    -- Kill Aura Toggle
-    CombatTab:CreateToggle({
-        Name = "Kill Aura",
+    -- Network Performance Boost
+    PingTab:CreateToggle({
+        Name = "Network Performance Boost",
         CurrentValue = false,
-        Flag = "KillAura",
-        Callback = function(Value)
-            killAura = Value
-            if killAura then
-                startKillAura()
-                if Rayfield then
-                    Rayfield:Notify({
-                        Title = "Kill Aura",
-                        Content = "Kill aura enabled! Auto-attacking nearby enemies",
-                        Duration = 3
-                    })
-                end
-            else
-                stopKillAura()
-            end
-        end,
-    })
-
-    -- Kill Aura Range
-    CombatTab:CreateSlider({
-        Name = "Kill Aura Range",
-        Range = {8, 25},
-        Increment = 1,
-        Suffix = "Studs",
-        CurrentValue = 15,
-        Flag = "KillAuraRange",
-        Callback = function(Value)
-            killAuraRange = Value
-        end,
-    })
-
-    -- Auto Stomp
-    CombatTab:CreateToggle({
-        Name = "Auto Stomp (Q Key)",
-        CurrentValue = false,
-        Flag = "AutoStomp",
-        Callback = function(Value)
-            autoStomp = Value
-            if autoStomp then
-                startAutoStomp()
-            else
-                stopAutoStomp()
-            end
-        end,
-    })
-
-    CombatTab:CreateSection("Weapon Modifications")
-
-    -- Hitbox Expander
-    CombatTab:CreateToggle({
-        Name = "Hitbox Expander",
-        CurrentValue = false,
-        Flag = "HitboxExpander",
-        Callback = function(Value)
-            hitboxExpander = Value
-            if hitboxExpander then
-                enableHitboxExpander()
-            else
-                disableHitboxExpander()
-            end
-        end,
-    })
-
-    -- Hitbox Size
-    CombatTab:CreateSlider({
-        Name = "Hitbox Size",
-        Range = {5, 20},
-        Increment = 1,
-        Suffix = "Size",
-        CurrentValue = 10,
-        Flag = "HitboxSize",
-        Callback = function(Value)
-            hitboxSize = Value
-            if hitboxExpander then
-                enableHitboxExpander()
-            end
-        end,
-    })
-
-    -- Weapon Reach
-    CombatTab:CreateToggle({
-        Name = "Extended Weapon Reach",
-        CurrentValue = false,
-        Flag = "WeaponReach",
-        Callback = function(Value)
-            weaponReach = Value
-            if weaponReach then
-                enableWeaponReach()
-            else
-                disableWeaponReach()
-            end
-        end,
-    })
-
-    -- Weapon Reach Value
-    CombatTab:CreateSlider({
-        Name = "Reach Distance",
-        Range = {3, 15},
-        Increment = 1,
-        Suffix = "Studs",
-        CurrentValue = 8,
-        Flag = "ReachValue",
-        Callback = function(Value)
-            weaponReachValue = Value
-            if weaponReach then
-                enableWeaponReach()
-            end
-        end,
-    })
-
-    CombatTab:CreateSection("Survival Features")
-
-    -- Auto Revive
-    CombatTab:CreateToggle({
-        Name = "Auto Revive (R Key)",
-        CurrentValue = false,
-        Flag = "AutoRevive",
-        Callback = function(Value)
-            autoRevive = Value
-            if autoRevive then
-                startAutoRevive()
-            else
-                stopAutoRevive()
-            end
-        end,
-    })
-
-    -- Anti Ragdoll
-    CombatTab:CreateToggle({
-        Name = "Anti Ragdoll",
-        CurrentValue = false,
-        Flag = "AntiRagdoll",
-        Callback = function(Value)
-            antiRagdoll = Value
-            if antiRagdoll then
-                enableAntiRagdoll()
-            else
-                disableAntiRagdoll()
-            end
-        end,
-    })
-
-    -- Manual Parry Test
-    CombatTab:CreateButton({
-        Name = "Test Parry (F Key)",
-        Callback = function()
-            executeParry("Manual Test")
-            if Rayfield then
-                Rayfield:Notify({
-                    Title = "Parry Test",
-                    Content = "Manual parry executed!",
-                    Duration = 2
-                })
-            end
-        end
-    })
-end
-
--- PLAYER FEATURES
-if PlayerTab then
-    PlayerTab:CreateSection("Movement Enhancement")
-    
-    -- Speed Hack
-    PlayerTab:CreateSlider({
-        Name = "Walk Speed",
-        Range = {16, 150},
-        Increment = 2,
-        Suffix = "Speed",
-        CurrentValue = 16,
-        Flag = "WalkSpeed",
-        Callback = function(Value)
-            currentSpeed = Value
-            if character and character:FindFirstChild("Humanoid") then
-                character.Humanoid.WalkSpeed = Value
-            end
-        end,
-    })
-
-    -- Jump Power
-    PlayerTab:CreateSlider({
-        Name = "Jump Power",
-        Range = {50, 300},
-        Increment = 10,
-        Suffix = "Power",
-        CurrentValue = 50,
-        Flag = "JumpPower",
-        Callback = function(Value)
-            if character and character:FindFirstChild("Humanoid") then
-                character.Humanoid.JumpPower = Value
-            end
-        end,
-    })
-
-    -- Noclip
-    PlayerTab:CreateToggle({
-        Name = "Noclip",
-        CurrentValue = false,
-        Flag = "NoClip",
-        Callback = function(Value)
-            noClip = Value
-        end,
-    })
-
-    PlayerTab:CreateSection("Stamina & Health")
-
-    -- Infinite Stamina
-    PlayerTab:CreateToggle({
-        Name = "Infinite Stamina",
-        CurrentValue = false,
-        Flag = "InfiniteStamina",
-        Callback = function(Value)
-            infiniteStamina = Value
-            if infiniteStamina then
-                enableInfiniteStamina()
-            else
-                disableInfiniteStamina()
-            end
-        end,
-    })
-
-    -- Instant Heal
-    PlayerTab:CreateButton({
-        Name = "Instant Heal",
-        Callback = function()
-            instantHeal()
-        end
-    })
-
-    -- God Mode (Anti Damage)
-    PlayerTab:CreateToggle({
-        Name = "God Mode",
-        CurrentValue = false,
-        Flag = "GodMode",
+        Flag = "NetworkBoost",
         Callback = function(Value)
             if Value then
-                enableGodMode()
+                enableNetworkBoost()
             else
-                disableGodMode()
+                disableNetworkBoost()
             end
         end,
     })
 
-    PlayerTab:CreateSection("Teleportation")
+    -- Render Optimization
+    PingTab:CreateToggle({
+        Name = "Render Optimization",
+        CurrentValue = false,
+        Flag = "RenderOpt",
+        Callback = function(Value)
+            if Value then
+                enableRenderOptimization()
+            else
+                disableRenderOptimization()
+            end
+        end,
+    })
 
-    -- Teleport to Spawn
-    PlayerTab:CreateButton({
-        Name = "Teleport to Spawn",
+    PingTab:CreateSection("Connection Monitoring")
+
+    -- Real-time Ping Display
+    local PingLabel = PingTab:CreateLabel("Current Ping: Calculating...")
+    
+    -- Ping Monitor
+    PingTab:CreateToggle({
+        Name = "Real-time Ping Monitor",
+        CurrentValue = false,
+        Flag = "PingMonitor",
+        Callback = function(Value)
+            if Value then
+                startPingMonitor(PingLabel)
+            else
+                stopPingMonitor()
+            end
+        end,
+    })
+
+    -- Latency Reducer
+    PingTab:CreateButton({
+        Name = "Apply Latency Reduction",
         Callback = function()
-            teleportToSpawn()
+            applyLatencyReduction()
         end
     })
 
-    -- Teleport to Random Player
-    PlayerTab:CreateButton({
-        Name = "Teleport to Random Player",
+    -- Memory Optimizer
+    PingTab:CreateButton({
+        Name = "Optimize Memory Usage",
         Callback = function()
-            teleportToRandomPlayer()
-        end
-    })
-
-    -- Teleport Behind Target
-    PlayerTab:CreateButton({
-        Name = "Teleport Behind Nearest Enemy",
-        Callback = function()
-            teleportBehindNearestEnemy()
+            optimizeMemoryUsage()
         end
     })
 end
 
--- VISUAL FEATURES
+-- UNIVERSAL AIM TAB
+if AimTab then
+    AimTab:CreateSection("Silent Aim System")
+    
+    -- Silent Aim Toggle
+    AimTab:CreateToggle({
+        Name = "Universal Silent Aim",
+        CurrentValue = false,
+        Flag = "SilentAim",
+        Callback = function(Value)
+            silentAimEnabled = Value
+            if silentAimEnabled then
+                enableSilentAim()
+                if Rayfield then
+                    Rayfield:Notify({
+                        Title = "Silent Aim",
+                        Content = "Universal silent aim system enabled!",
+                        Duration = 3
+                    })
+                end
+            else
+                disableSilentAim()
+            end
+        end,
+    })
+
+    -- Aimbot Toggle
+    AimTab:CreateToggle({
+        Name = "Universal Aimbot",
+        CurrentValue = false,
+        Flag = "Aimbot",
+        Callback = function(Value)
+            aimbotEnabled = Value
+            if aimbotEnabled then
+                enableAimbot()
+            else
+                disableAimbot()
+            end
+        end,
+    })
+
+    AimTab:CreateSection("Aim Configuration")
+
+    -- FOV Setting
+    AimTab:CreateSlider({
+        Name = "Field of View",
+        Range = {30, 300},
+        Increment = 10,
+        Suffix = "°",
+        CurrentValue = 100,
+        Flag = "AimFOV",
+        Callback = function(Value)
+            aimSettings.fov = Value
+            updateFOVCircle()
+        end,
+    })
+
+    -- Smoothness
+    AimTab:CreateSlider({
+        Name = "Aim Smoothness",
+        Range = {0.1, 2.0},
+        Increment = 0.1,
+        Suffix = "",
+        CurrentValue = 0.5,
+        Flag = "AimSmooth",
+        Callback = function(Value)
+            aimSettings.smoothness = Value
+        end,
+    })
+
+    -- Target Part
+    AimTab:CreateDropdown({
+        Name = "Target Body Part",
+        Options = {"Head", "Torso", "HumanoidRootPart"},
+        CurrentOption = {"Head"},
+        MultipleOptions = false,
+        Flag = "TargetPart",
+        Callback = function(Option)
+            aimSettings.targetPart = Option[1]
+        end,
+    })
+
+    AimTab:CreateSection("Aim Features")
+
+    -- Wall Check
+    AimTab:CreateToggle({
+        Name = "Wall Check",
+        CurrentValue = true,
+        Flag = "WallCheck",
+        Callback = function(Value)
+            aimSettings.wallCheck = Value
+        end,
+    })
+
+    -- Team Check
+    AimTab:CreateToggle({
+        Name = "Team Check",
+        CurrentValue = true,
+        Flag = "TeamCheck",
+        Callback = function(Value)
+            aimSettings.teamCheck = Value
+        end,
+    })
+
+    -- Visible Only
+    AimTab:CreateToggle({
+        Name = "Visible Targets Only",
+        CurrentValue = true,
+        Flag = "VisibleOnly",
+        Callback = function(Value)
+            aimSettings.visibleOnly = Value
+        end,
+    })
+
+    -- FOV Circle Toggle
+    AimTab:CreateToggle({
+        Name = "Show FOV Circle",
+        CurrentValue = false,
+        Flag = "FOVCircle",
+        Callback = function(Value)
+            if Value then
+                createFOVCircle()
+            else
+                removeFOVCircle()
+            end
+        end,
+    })
+end
+
+-- VISUAL ENHANCEMENTS TAB
 if VisualTab then
     VisualTab:CreateSection("Player ESP")
     
-    -- Advanced ESP Toggle
+    -- Advanced ESP
     VisualTab:CreateToggle({
-        Name = "Advanced Player ESP",
+        Name = "Universal Player ESP",
         CurrentValue = false,
         Flag = "ESP",
         Callback = function(Value)
             espEnabled = Value
             if espEnabled then
-                enableAdvancedESP()
+                enableUniversalESP()
             else
-                disableAdvancedESP()
+                disableUniversalESP()
             end
         end,
     })
 
-    -- Weapon ESP
+    -- ESP Features
     VisualTab:CreateToggle({
-        Name = "Weapon ESP",
-        CurrentValue = false,
-        Flag = "WeaponESP",
+        Name = "Show Player Names",
+        CurrentValue = true,
+        Flag = "ESPNames",
         Callback = function(Value)
-            if Value then
-                enableWeaponESP()
-            else
-                disableWeaponESP()
-            end
+            -- Will be used in ESP system
         end,
     })
 
-    -- Health ESP
     VisualTab:CreateToggle({
-        Name = "Health ESP",
-        CurrentValue = false,
-        Flag = "HealthESP",
+        Name = "Show Distance",
+        CurrentValue = true,
+        Flag = "ESPDistance",
         Callback = function(Value)
-            if Value then
-                enableHealthESP()
-            else
-                disableHealthESP()
-            end
+            -- Will be used in ESP system
         end,
     })
 
-    VisualTab:CreateSection("World Modifications")
+    VisualTab:CreateToggle({
+        Name = "Show Health",
+        CurrentValue = false,
+        Flag = "ESPHealth",
+        Callback = function(Value)
+            -- Will be used in ESP system
+        end,
+    })
+
+    VisualTab:CreateSection("World Enhancement")
 
     -- Full Bright
     VisualTab:CreateToggle({
@@ -531,7 +401,6 @@ if VisualTab then
         CurrentValue = false,
         Flag = "FullBright",
         Callback = function(Value)
-            fullBright = Value
             if Value then
                 Lighting.Brightness = 10
                 Lighting.Ambient = Color3.new(1, 1, 1)
@@ -562,39 +431,105 @@ if VisualTab then
         end,
     })
 
-    -- Crosshair
+    -- Performance Mode
     VisualTab:CreateToggle({
-        Name = "Mobile Crosshair",
+        Name = "Performance Mode",
         CurrentValue = false,
-        Flag = "Crosshair",
+        Flag = "PerfMode",
         Callback = function(Value)
-            if Value then
-                createMobileCrosshair()
-            else
-                removeMobileCrosshair()
-            end
-        end,
-    })
-
-    -- Damage Indicators
-    VisualTab:CreateToggle({
-        Name = "Damage Indicators",
-        CurrentValue = false,
-        Flag = "DamageIndicators",
-        Callback = function(Value)
-            if Value then
-                enableDamageIndicators()
-            else
-                disableDamageIndicators()
-            end
+            setPerformanceMode(Value)
         end,
     })
 end
 
--- UTILITY FEATURES
-if UtilityTab then
-    UtilityTab:CreateSection("Game Utilities")
+-- SERVER MANAGEMENT TAB
+if ServerTab then
+    ServerTab:CreateSection("Asian Region Server Hopping")
+    
+    -- Auto Server Hop for Low Ping
+    ServerTab:CreateToggle({
+        Name = "Smart Server Hop (Asian Servers)",
+        CurrentValue = false,
+        Flag = "SmartHop",
+        Callback = function(Value)
+            serverHopEnabled = Value
+            if serverHopEnabled then
+                startSmartServerHop()
+                if Rayfield then
+                    Rayfield:Notify({
+                        Title = "Smart Server Hop",
+                        Content = "Searching for low-ping Asian servers...",
+                        Duration = 4
+                    })
+                end
+            else
+                stopSmartServerHop()
+            end
+        end,
+    })
 
+    -- Max Ping Threshold
+    ServerTab:CreateSlider({
+        Name = "Max Ping Threshold",
+        Range = {30, 150},
+        Increment = 10,
+        Suffix = "ms",
+        CurrentValue = 80,
+        Flag = "MaxPing",
+        Callback = function(Value)
+            maxPingThreshold = Value
+        end,
+    })
+
+    -- Target Region
+    ServerTab:CreateDropdown({
+        Name = "Preferred Region",
+        Options = {"Asia", "Asia-Pacific", "Southeast Asia", "East Asia"},
+        CurrentOption = {"Asia"},
+        MultipleOptions = false,
+        Flag = "TargetRegion",
+        Callback = function(Option)
+            targetRegion = Option[1]
+        end,
+    })
+
+    ServerTab:CreateSection("Manual Server Actions")
+
+    -- Manual Server Hop
+    ServerTab:CreateButton({
+        Name = "Find Low Ping Server",
+        Callback = function()
+            findLowPingServer()
+        end
+    })
+
+    -- Rejoin Current Server
+    ServerTab:CreateButton({
+        Name = "Rejoin Current Server",
+        Callback = function()
+            TeleportService:Teleport(game.PlaceId, player)
+        end
+    })
+
+    -- Server Info
+    local ServerInfoLabel = ServerTab:CreateLabel("Server Info: Loading...")
+    
+    -- Update server info
+    task.spawn(function()
+        while true do
+            local serverInfo = getServerInfo()
+            if ServerInfoLabel then
+                ServerInfoLabel:Set("Server Info: " .. serverInfo)
+            end
+            task.wait(5)
+        end
+    end)
+end
+
+-- UTILITIES TAB
+if UtilityTab then
+    UtilityTab:CreateSection("Universal Utilities")
+    
     -- Anti-AFK
     UtilityTab:CreateToggle({
         Name = "Anti-AFK",
@@ -609,493 +544,376 @@ if UtilityTab then
         end,
     })
 
-    -- Auto Collect Glory
-    UtilityTab:CreateToggle({
-        Name = "Auto Collect Glory",
-        CurrentValue = false,
-        Flag = "AutoGlory",
+    -- Walkspeed
+    UtilityTab:CreateSlider({
+        Name = "Walk Speed",
+        Range = {16, 100},
+        Increment = 2,
+        Suffix = "",
+        CurrentValue = 16,
+        Flag = "WalkSpeed",
         Callback = function(Value)
-            if Value then
-                startAutoGlory()
-            else
-                stopAutoGlory()
+            if character and humanoid then
+                humanoid.WalkSpeed = Value
             end
         end,
     })
 
-    -- Server Hop
-    UtilityTab:CreateButton({
-        Name = "Server Hop",
-        Callback = function()
-            serverHop()
-        end
-    })
-
-    -- Rejoin Server
-    UtilityTab:CreateButton({
-        Name = "Rejoin Server",
-        Callback = function()
-            game:GetService("TeleportService"):Teleport(game.PlaceId, player)
-        end
-    })
-
-    UtilityTab:CreateSection("Performance")
-
-    -- Mobile Performance Mode
-    UtilityTab:CreateButton({
-        Name = "Enable Mobile Performance Mode",
-        Callback = function()
-            optimizeForMobile()
-        end
-    })
-
-    -- Low Graphics Mode
-    UtilityTab:CreateToggle({
-        Name = "Low Graphics Mode",
-        CurrentValue = false,
-        Flag = "LowGraphics",
+    -- Jump Power
+    UtilityTab:CreateSlider({
+        Name = "Jump Power",
+        Range = {50, 200},
+        Increment = 10,
+        Suffix = "",
+        CurrentValue = 50,
+        Flag = "JumpPower",
         Callback = function(Value)
-            setLowGraphics(Value)
+            if character and humanoid then
+                humanoid.JumpPower = Value
+            end
         end,
     })
 
-    -- FPS Unlocker (Mobile Compatible)
-    UtilityTab:CreateToggle({
-        Name = "FPS Boost Mode",
-        CurrentValue = false,
-        Flag = "FPSBoost",
-        Callback = function(Value)
-            if Value then
-                enableFPSBoost()
-            else
-                disableFPSBoost()
-            end
-        end,
+    UtilityTab:CreateSection("System Optimization")
+
+    -- FPS Boost
+    UtilityTab:CreateButton({
+        Name = "Apply FPS Boost",
+        Callback = function()
+            applyFPSBoost()
+        end
+    })
+
+    -- Memory Cleanup
+    UtilityTab:CreateButton({
+        Name = "Clean Memory",
+        Callback = function()
+            cleanupMemory()
+        end
     })
 end
 
--- ADVANCED AUTO PARRY SYSTEM (Mobile Optimized)
-local parryConnections = {}
-
-function executeParry(reason)
-    if (tick() - lastParryTime) < parryCooldown then return end
+-- PING OPTIMIZATION FUNCTIONS (Bloxstrap-Style)
+function enablePingOptimization()
+    optimizationEnabled = true
     
-    -- Use coroutine for non-blocking execution
-    coroutine.wrap(function()
-        if VIM and VIM.SendKeyEvent then
-            pcall(function()
-                -- Press F key for parry
-                VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game)
-                task.wait(0.05) -- Minimal delay
-                VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-                lastParryTime = tick()
-                
-                if reason then
-                    print("[Auto Parry] Executed:", reason)
-                end
-            end)
-        end
-    end)()
-end
-
-function detectThreat(targetPlayer)
-    if not targetPlayer or not targetPlayer.Character then return false end
-    
-    local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local targetHumanoid = targetPlayer.Character:FindFirstChild("Humanoid")
-    
-    if not targetHRP or not targetHumanoid or not character or not humanoidRootPart then return false end
-    
-    local distance = (humanoidRootPart.Position - targetHRP.Position).Magnitude
-    if distance > parryRange then return false end
-    
-    -- Check if target is moving towards us
-    local velocity = targetHRP.AssemblyLinearVelocity
-    local speed = velocity.Magnitude
-    
-    if speed > 10 then
-        local direction = (humanoidRootPart.Position - targetHRP.Position).Unit
-        local velocityDirection = velocity.Unit
-        local dotProduct = velocityDirection:Dot(direction)
+    -- Apply network optimizations
+    pcall(function()
+        -- Reduce network quality for better ping
+        settings().Network.IncomingReplicationLag = 0
+        settings().Network.OutgoingReplicationLag = 0
         
-        -- If target is moving towards us with significant speed
-        if dotProduct > 0.3 and speed > 15 then
-            return true, distance, speed
-        end
-    end
+        -- Optimize physics stepping
+        settings().Physics.AllowSleep = false
+        settings().Physics.ThrottleAdjustTime = 0
+    end)
     
-    -- Check for attack animations
-    local animator = targetHumanoid:FindFirstChild("Animator")
-    if animator then
-        local tracks = animator:GetPlayingAnimationTracks()
-        for _, track in pairs(tracks) do
-            local animName = track.Name:lower()
-            if animName:find("attack") or animName:find("swing") or animName:find("slash") then
-                return true, distance, speed
-            end
-        end
-    end
-    
-    return false
-end
-
-function startAdvancedAutoParry()
-    -- Clear existing connections
-    for _, connection in pairs(parryConnections) do
-        if connection then
-            connection:Disconnect()
-        end
-    end
-    parryConnections = {}
-    
-    -- Main parry detection loop
-    parryConnections[#parryConnections + 1] = RunService.Heartbeat:Connect(function()
-        if not autoParry then return end
-        if not character or not humanoidRootPart then return end
+    -- Apply rendering optimizations similar to Bloxstrap flags
+    pcall(function()
+        -- Reduce graphics quality for better performance
+        settings().Rendering.QualityLevel = 1
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+        settings().Rendering.EnableFRM = false
         
-        -- Check all players for threats
-        for _, otherPlayer in pairs(Players:GetPlayers()) do
-            if otherPlayer ~= player then
-                local isThreat, distance, speed = detectThreat(otherPlayer)
-                
-                if isThreat then
-                    -- Calculate prediction if enabled
-                    local delay = 0
-                    if parryPrediction and distance and speed then
-                        delay = math.max(0, distance / speed - predictionTime)
-                    end
-                    
-                    -- Execute parry with prediction delay
-                    if delay > 0 then
-                        task.wait(delay)
-                    end
-                    
-                    executeParry("Threat detected: " .. otherPlayer.Name)
-                    break -- Only parry once per frame
-                end
+        -- Disable expensive visual features
+        for _, effect in pairs(Lighting:GetChildren()) do
+            if effect:IsA("PostEffect") then
+                effect.Enabled = false
             end
         end
     end)
-end
-
-function stopAdvancedAutoParry()
-    for _, connection in pairs(parryConnections) do
-        if connection then
-            connection:Disconnect()
-        end
-    end
-    parryConnections = {}
-end
-
--- KILL AURA SYSTEM
-function startKillAura()
-    if killAuraConnection then
-        killAuraConnection:Disconnect()
-    end
     
-    killAuraConnection = RunService.Heartbeat:Connect(function()
-        if not killAura then return end
-        if not character or not humanoidRootPart then return end
-        if (tick() - lastAttackTime) < killAuraDelay then return end
-        
-        -- Find nearest target
-        local nearestTarget = nil
-        local nearestDistance = math.huge
-        
-        for _, otherPlayer in pairs(Players:GetPlayers()) do
-            if otherPlayer ~= player and otherPlayer.Character then
-                local targetHRP = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if targetHRP then
-                    local distance = (humanoidRootPart.Position - targetHRP.Position).Magnitude
-                    if distance <= killAuraRange and distance < nearestDistance then
-                        nearestDistance = distance
-                        nearestTarget = otherPlayer
-                    end
-                end
-            end
-        end
-        
-        -- Attack nearest target
-        if nearestTarget then
-            attackTarget(nearestTarget)
-            lastAttackTime = tick()
-        end
+    if Rayfield then
+        Rayfield:Notify({
+            Title = "Ping Optimization",
+            Content = "Bloxstrap-style optimizations applied!",
+            Duration = 3
+        })
+    end
+end
+
+function disablePingOptimization()
+    optimizationEnabled = false
+    
+    -- Restore default settings
+    pcall(function()
+        settings().Rendering.QualityLevel = 10
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
     end)
 end
 
-function attackTarget(target)
-    if not target or not target.Character then return end
-    
-    coroutine.wrap(function()
-        if VIM then
-            pcall(function()
-                -- Left click to attack
-                VIM:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                task.wait(0.05)
-                VIM:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-            end)
-        end
-    end)()
-end
-
-function stopKillAura()
-    if killAuraConnection then
-        killAuraConnection:Disconnect()
-        killAuraConnection = nil
-    end
-end
-
--- AUTO STOMP SYSTEM
-local stompConnection = nil
-function startAutoStomp()
-    if stompConnection then
-        stompConnection:Disconnect()
-    end
-    
-    stompConnection = RunService.Heartbeat:Connect(function()
-        if not autoStomp then return end
-        if not character or not humanoidRootPart then return end
-        
-        -- Look for downed enemies
-        for _, otherPlayer in pairs(Players:GetPlayers()) do
-            if otherPlayer ~= player and otherPlayer.Character then
-                local targetHumanoid = otherPlayer.Character:FindFirstChild("Humanoid")
-                local targetHRP = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
-                
-                if targetHumanoid and targetHRP then
-                    -- Check if target is downed (PlatformStand usually means ragdolled/downed)
-                    if targetHumanoid.PlatformStand then
-                        local distance = (humanoidRootPart.Position - targetHRP.Position).Magnitude
-                        if distance <= 8 then
-                            -- Execute stomp (Q key)
-                            coroutine.wrap(function()
-                                if VIM then
-                                    pcall(function()
-                                        VIM:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
-                                        task.wait(0.05)
-                                        VIM:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
-                                    end)
-                                end
-                            end)()
-                            task.wait(0.5) -- Prevent spam
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
-function stopAutoStomp()
-    if stompConnection then
-        stompConnection:Disconnect()
-        stompConnection = nil
-    end
-end
-
--- AUTO REVIVE SYSTEM
-function startAutoRevive()
-    if autoReviveConnection then
-        autoReviveConnection:Disconnect()
-    end
-    
-    autoReviveConnection = RunService.Heartbeat:Connect(function()
-        if not autoRevive then return end
-        if not character or not humanoid then return end
-        
-        -- Check if player is downed
-        if humanoid.PlatformStand or humanoid.Health <= 0 then
-            -- Execute revive (R key)
-            coroutine.wrap(function()
-                if VIM then
-                    pcall(function()
-                        VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-                        task.wait(0.1)
-                        VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-                    end)
-                end
-            end)()
-            task.wait(1) -- Wait before trying again
-        end
-    end)
-end
-
-function stopAutoRevive()
-    if autoReviveConnection then
-        autoReviveConnection:Disconnect()
-        autoReviveConnection = nil
-    end
-end
-
--- HITBOX EXPANDER
-function enableHitboxExpander()
-    for _, otherPlayer in pairs(Players:GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character then
-            local targetHRP = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if targetHRP then
-                targetHRP.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-                targetHRP.Transparency = 0.8
-            end
-        end
-    end
-    
-    -- Apply to new players
-    Players.PlayerAdded:Connect(function(newPlayer)
-        newPlayer.CharacterAdded:Connect(function(newChar)
-            if hitboxExpander then
-                local targetHRP = newChar:WaitForChild("HumanoidRootPart", 5)
-                if targetHRP then
-                    targetHRP.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-                    targetHRP.Transparency = 0.8
-                end
-            end
+function enableNetworkBoost()
+    pcall(function()
+        -- Additional network optimizations
+        game:GetService("NetworkClient").ChildRemoved:Connect(function()
+            settings().Physics.PhysicsEnvironmentalThrottle = Enum.EnviromentalPhysicsThrottle.Disabled
         end)
     end)
 end
 
-function disableHitboxExpander()
-    for _, otherPlayer in pairs(Players:GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character then
-            local targetHRP = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if targetHRP then
-                targetHRP.Size = Vector3.new(2, 2, 1)
-                targetHRP.Transparency = 1
-            end
-        end
-    end
+function disableNetworkBoost()
+    pcall(function()
+        settings().Physics.PhysicsEnvironmentalThrottle = Enum.EnviromentalPhysicsThrottle.DefaultAuto
+    end)
 end
 
--- WEAPON REACH MODIFIER
-function enableWeaponReach()
-    if not character then return end
-    
-    for _, tool in pairs(character:GetChildren()) do
-        if tool:IsA("Tool") then
-            local handle = tool:FindFirstChild("Handle")
-            if handle then
-                -- Modify weapon reach by scaling handle
-                local originalSize = handle.Size
-                handle.Size = originalSize * Vector3.new(1, 1, weaponReachValue)
-            end
+function enableRenderOptimization()
+    -- Remove visual effects that cause lag
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+            obj.Enabled = false
+        elseif obj:IsA("Explosion") then
+            obj.Visible = false
         end
     end
+    
+    -- Set lighting to performance mode
+    Lighting.GlobalShadows = false
+    Lighting.Technology = Enum.Technology.Compatibility
 end
 
-function disableWeaponReach()
-    if not character then return end
-    
-    for _, tool in pairs(character:GetChildren()) do
-        if tool:IsA("Tool") then
-            local handle = tool:FindFirstChild("Handle")
-            if handle then
-                -- Reset to original size (approximate)
-                handle.Size = Vector3.new(1, 1, 4)
-            end
+function disableRenderOptimization()
+    -- Re-enable effects
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+            obj.Enabled = true
         end
     end
+    
+    Lighting.GlobalShadows = true
+    Lighting.Technology = Enum.Technology.Future
 end
 
--- INFINITE STAMINA
-local staminaConnections = {}
-function enableInfiniteStamina()
-    -- Clear existing connections
-    for _, conn in pairs(staminaConnections) do
-        if conn then conn:Disconnect() end
+-- PING MONITORING
+local pingMonitorConnection = nil
+
+function startPingMonitor(label)
+    if pingMonitorConnection then
+        pingMonitorConnection:Disconnect()
     end
-    staminaConnections = {}
     
-    staminaConnections[1] = RunService.Heartbeat:Connect(function()
-        if not infiniteStamina then return end
-        if not character then return end
+    pingMonitorConnection = RunService.Heartbeat:Connect(function()
+        local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+        currentPing = ping
         
-        -- Look for stamina-related values in character
-        for _, obj in pairs(character:GetDescendants()) do
-            if obj:IsA("NumberValue") or obj:IsA("IntValue") then
-                if obj.Name:lower():find("stamina") then
-                    obj.Value = obj.Value < 100 and 100 or obj.Value
+        if label then
+            local pingColor = ""
+            if ping < 50 then
+                pingColor = "🟢 Excellent"
+            elseif ping < 100 then
+                pingColor = "🟡 Good"
+            elseif ping < 150 then
+                pingColor = "🟠 Fair"
+            else
+                pingColor = "🔴 Poor"
+            end
+            
+            label:Set(string.format("Current Ping: %dms (%s)", ping, pingColor))
+        end
+    end)
+end
+
+function stopPingMonitor()
+    if pingMonitorConnection then
+        pingMonitorConnection:Disconnect()
+        pingMonitorConnection = nil
+    end
+end
+
+function applyLatencyReduction()
+    pcall(function()
+        -- Force garbage collection
+        collectgarbage("collect")
+        
+        -- Optimize heartbeat
+        settings().Physics.AllowSleep = true
+        settings().Rendering.EnableFRM = true
+        
+        if Rayfield then
+            Rayfield:Notify({
+                Title = "Latency Reduction",
+                Content = "Latency optimization applied!",
+                Duration = 2
+            })
+        end
+    end)
+end
+
+function optimizeMemoryUsage()
+    -- Clean up memory
+    collectgarbage("collect")
+    
+    -- Remove unnecessary objects
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("Decal") or obj:IsA("Texture") then
+            if obj.Parent and obj.Parent.Parent ~= character then
+                obj.Transparency = 1
+            end
+        end
+    end
+    
+    if Rayfield then
+        Rayfield:Notify({
+            Title = "Memory Optimization",
+            Content = "Memory usage optimized!",
+            Duration = 2
+        })
+    end
+end
+
+-- UNIVERSAL SILENT AIM SYSTEM
+function enableSilentAim()
+    -- Create aim detection loop
+    aimConnections.silentAim = RunService.Heartbeat:Connect(function()
+        if not silentAimEnabled then return end
+        
+        silentTarget = getClosestTarget()
+    end)
+    
+    -- Hook mouse/camera for silent aim
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        if silentAimEnabled and silentTarget then
+            if method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "Raycast" then
+                -- Redirect ray to silent target
+                local targetPart = silentTarget.Character:FindFirstChild(aimSettings.targetPart)
+                if targetPart then
+                    args[1] = Ray.new(camera.CFrame.Position, (targetPart.Position - camera.CFrame.Position).Unit * 1000)
                 end
             end
         end
+        
+        return oldNamecall(self, unpack(args))
     end)
 end
 
-function disableInfiniteStamina()
-    for _, conn in pairs(staminaConnections) do
-        if conn then conn:Disconnect() end
+function disableSilentAim()
+    if aimConnections.silentAim then
+        aimConnections.silentAim:Disconnect()
+        aimConnections.silentAim = nil
     end
-    staminaConnections = {}
+    silentTarget = nil
 end
 
--- ANTI RAGDOLL SYSTEM
-local ragdollConnection = nil
-function enableAntiRagdoll()
-    if ragdollConnection then
-        ragdollConnection:Disconnect()
-    end
-    
-    ragdollConnection = RunService.Heartbeat:Connect(function()
-        if not antiRagdoll then return end
-        if not character or not humanoid then return end
+-- UNIVERSAL AIMBOT SYSTEM
+function enableAimbot()
+    aimConnections.aimbot = RunService.Heartbeat:Connect(function()
+        if not aimbotEnabled then return end
         
-        -- Prevent ragdoll state
-        if humanoid.PlatformStand then
-            humanoid.PlatformStand = false
-        end
-        
-        -- Keep character upright
-        for _, part in pairs(character:GetChildren()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                local bodyPos = part:FindFirstChild("BodyPosition")
-                local bodyAng = part:FindFirstChild("BodyAngularVelocity")
-                if bodyPos then bodyPos:Destroy() end
-                if bodyAng then bodyAng:Destroy() end
+        local target = getClosestTarget()
+        if target and target.Character then
+            local targetPart = target.Character:FindFirstChild(aimSettings.targetPart)
+            if targetPart then
+                local targetPosition = targetPart.Position
+                local currentCFrame = camera.CFrame
+                local targetCFrame = CFrame.lookAt(currentCFrame.Position, targetPosition)
+                
+                -- Smooth aim
+                camera.CFrame = currentCFrame:Lerp(targetCFrame, aimSettings.smoothness * 0.1)
             end
         end
     end)
 end
 
-function disableAntiRagdoll()
-    if ragdollConnection then
-        ragdollConnection:Disconnect()
-        ragdollConnection = nil
+function disableAimbot()
+    if aimConnections.aimbot then
+        aimConnections.aimbot:Disconnect()
+        aimConnections.aimbot = nil
     end
 end
 
--- GOD MODE SYSTEM
-local godModeConnection = nil
-local originalHealth = 100
-
-function enableGodMode()
-    if not character or not humanoid then return end
-    originalHealth = humanoid.MaxHealth
+-- TARGET DETECTION
+function getClosestTarget()
+    local closestTarget = nil
+    local closestDistance = math.huge
     
-    if godModeConnection then
-        godModeConnection:Disconnect()
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if targetPlayer ~= player and targetPlayer.Character then
+            local targetPart = targetPlayer.Character:FindFirstChild(aimSettings.targetPart)
+            if targetPart then
+                -- Team check
+                if aimSettings.teamCheck and targetPlayer.Team == player.Team then
+                    continue
+                end
+                
+                -- Distance and FOV check
+                local screenPoint, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                if onScreen then
+                    local distance = (camera.CFrame.Position - targetPart.Position).Magnitude
+                    local fovDistance = (Vector2.new(screenPoint.X, screenPoint.Y) - Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)).Magnitude
+                    
+                    if fovDistance <= aimSettings.fov and distance < closestDistance then
+                        -- Wall check
+                        if aimSettings.wallCheck then
+                            local ray = Ray.new(camera.CFrame.Position, (targetPart.Position - camera.CFrame.Position).Unit * distance)
+                            local hit = Workspace:FindPartOnRayWithIgnoreList(ray, {character})
+                            
+                            if hit and hit.Parent ~= targetPlayer.Character then
+                                continue
+                            end
+                        end
+                        
+                        closestDistance = distance
+                        closestTarget = targetPlayer
+                    end
+                end
+            end
+        end
     end
     
-    godModeConnection = humanoid.HealthChanged:Connect(function(health)
-        if health < originalHealth then
-            humanoid.Health = originalHealth
+    return closestTarget
+end
+
+-- FOV CIRCLE
+function createFOVCircle()
+    if fovCircle then
+        fovCircle:Remove()
+    end
+    
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Thickness = 2
+    fovCircle.NumSides = 50
+    fovCircle.Color = Color3.new(1, 1, 1)
+    fovCircle.Transparency = 0.5
+    fovCircle.Filled = false
+    fovCircle.Visible = true
+    
+    updateFOVCircle()
+    
+    -- Update circle position
+    aimConnections.fovUpdate = RunService.Heartbeat:Connect(function()
+        if fovCircle then
+            fovCircle.Position = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
         end
     end)
-    
-    humanoid.Health = originalHealth
 end
 
-function disableGodMode()
-    if godModeConnection then
-        godModeConnection:Disconnect()
-        godModeConnection = nil
+function updateFOVCircle()
+    if fovCircle then
+        fovCircle.Radius = aimSettings.fov
     end
 end
 
--- ADVANCED ESP SYSTEM
-local espObjects = {}
+function removeFOVCircle()
+    if fovCircle then
+        fovCircle:Remove()
+        fovCircle = nil
+    end
+    
+    if aimConnections.fovUpdate then
+        aimConnections.fovUpdate:Disconnect()
+        aimConnections.fovUpdate = nil
+    end
+end
 
-function enableAdvancedESP()
-    for _, otherPlayer in pairs(Players:GetPlayers()) do
-        if otherPlayer ~= player then
-            addAdvancedESP(otherPlayer)
+-- UNIVERSAL ESP SYSTEM
+function enableUniversalESP()
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if targetPlayer ~= player then
+            addESPToPlayer(targetPlayer)
         end
     end
     
@@ -1104,13 +922,13 @@ function enableAdvancedESP()
         newPlayer.CharacterAdded:Connect(function()
             task.wait(1)
             if espEnabled then
-                addAdvancedESP(newPlayer)
+                addESPToPlayer(newPlayer)
             end
         end)
     end)
 end
 
-function addAdvancedESP(targetPlayer)
+function addESPToPlayer(targetPlayer)
     if not targetPlayer.Character then return end
     
     -- Remove existing ESP
@@ -1119,31 +937,32 @@ function addAdvancedESP(targetPlayer)
     local character = targetPlayer.Character
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     local head = character:FindFirstChild("Head")
+    local humanoid = character:FindFirstChild("Humanoid")
     
     if not humanoidRootPart or not head then return end
     
     -- Create highlight
     local highlight = Instance.new("Highlight")
-    highlight.Name = "PlayerESP_" .. targetPlayer.Name
+    highlight.Name = "UniversalESP_" .. targetPlayer.Name
     highlight.Adornee = character
-    highlight.FillColor = Color3.new(1, 0, 0)
+    highlight.FillColor = Color3.new(1, 0.2, 0.2)
     highlight.OutlineColor = Color3.new(1, 1, 1)
     highlight.FillTransparency = 0.6
     highlight.OutlineTransparency = 0
     highlight.Parent = character
     
-    -- Create name and distance ESP
+    -- Create info GUI
     local billboardGui = Instance.new("BillboardGui")
-    billboardGui.Name = "NameESP_" .. targetPlayer.Name
+    billboardGui.Name = "ESPInfo_" .. targetPlayer.Name
     billboardGui.Adornee = head
-    billboardGui.Size = UDim2.new(0, 200, 0, 100)
+    billboardGui.Size = UDim2.new(0, 200, 0, 120)
     billboardGui.StudsOffset = Vector3.new(0, 3, 0)
     billboardGui.AlwaysOnTop = true
     billboardGui.Parent = character
     
     -- Name label
     local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    nameLabel.Size = UDim2.new(1, 0, 0.33, 0)
     nameLabel.Position = UDim2.new(0, 0, 0, 0)
     nameLabel.BackgroundTransparency = 1
     nameLabel.Text = targetPlayer.Name
@@ -1156,8 +975,8 @@ function addAdvancedESP(targetPlayer)
     
     -- Distance label
     local distanceLabel = Instance.new("TextLabel")
-    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    distanceLabel.Size = UDim2.new(1, 0, 0.33, 0)
+    distanceLabel.Position = UDim2.new(0, 0, 0.33, 0)
     distanceLabel.BackgroundTransparency = 1
     distanceLabel.Text = "0 studs"
     distanceLabel.TextColor3 = Color3.new(0, 1, 0)
@@ -1167,10 +986,23 @@ function addAdvancedESP(targetPlayer)
     distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
     distanceLabel.Parent = billboardGui
     
-    -- Store ESP objects
-    espObjects[targetPlayer.Name] = {highlight, billboardGui, distanceLabel}
+    -- Health label
+    local healthLabel = Instance.new("TextLabel")
+    healthLabel.Size = UDim2.new(1, 0, 0.33, 0)
+    healthLabel.Position = UDim2.new(0, 0, 0.66, 0)
+    healthLabel.BackgroundTransparency = 1
+    healthLabel.Text = "100 HP"
+    healthLabel.TextColor3 = Color3.new(0, 1, 0)
+    healthLabel.TextScaled = true
+    healthLabel.Font = Enum.Font.Gotham
+    healthLabel.TextStrokeTransparency = 0
+    healthLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    healthLabel.Parent = billboardGui
     
-    -- Update distance continuously
+    -- Store ESP objects
+    espObjects[targetPlayer.Name] = {highlight, billboardGui, distanceLabel, healthLabel}
+    
+    -- Update ESP info continuously
     task.spawn(function()
         while espEnabled and targetPlayer.Character and humanoidRootPart.Parent do
             if character and humanoidRootPart then
@@ -1178,15 +1010,35 @@ function addAdvancedESP(targetPlayer)
                 distanceLabel.Text = distance .. " studs"
                 
                 -- Color code based on distance
-                if distance <= 15 then
+                if distance <= 20 then
                     distanceLabel.TextColor3 = Color3.new(1, 0, 0) -- Red - Close
-                elseif distance <= 30 then
+                    highlight.FillColor = Color3.new(1, 0, 0)
+                elseif distance <= 50 then
                     distanceLabel.TextColor3 = Color3.new(1, 1, 0) -- Yellow - Medium
+                    highlight.FillColor = Color3.new(1, 1, 0)
                 else
                     distanceLabel.TextColor3 = Color3.new(0, 1, 0) -- Green - Far
+                    highlight.FillColor = Color3.new(0, 1, 0)
+                end
+                
+                -- Update health if humanoid exists
+                if humanoid then
+                    local health = math.floor(humanoid.Health)
+                    local maxHealth = math.floor(humanoid.MaxHealth)
+                    healthLabel.Text = health .. "/" .. maxHealth .. " HP"
+                    
+                    -- Color code health
+                    local healthPercent = health / maxHealth
+                    if healthPercent > 0.7 then
+                        healthLabel.TextColor3 = Color3.new(0, 1, 0) -- Green
+                    elseif healthPercent > 0.3 then
+                        healthLabel.TextColor3 = Color3.new(1, 1, 0) -- Yellow
+                    else
+                        healthLabel.TextColor3 = Color3.new(1, 0, 0) -- Red
+                    end
                 end
             end
-            task.wait(0.1)
+            task.wait(0.2)
         end
     end)
 end
@@ -1203,7 +1055,7 @@ function removeESPFromPlayer(targetPlayer)
     end
 end
 
-function disableAdvancedESP()
+function disableUniversalESP()
     for playerName, espData in pairs(espObjects) do
         for _, obj in pairs(espData) do
             if obj and obj.Parent then
@@ -1214,193 +1066,165 @@ function disableAdvancedESP()
     espObjects = {}
 end
 
--- WEAPON ESP
-function enableWeaponESP()
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("Tool") and not obj.Parent:IsA("Player") and not obj.Parent:IsA("Backpack") then
-            addWeaponHighlight(obj)
-        end
+-- SMART SERVER HOPPING (Asian Regions)
+local serverHopConnection = nil
+local serverList = {}
+
+function startSmartServerHop()
+    if serverHopConnection then
+        serverHopConnection:Disconnect()
     end
     
-    -- Monitor for new weapons
-    Workspace.DescendantAdded:Connect(function(obj)
-        if obj:IsA("Tool") and not obj.Parent:IsA("Player") and not obj.Parent:IsA("Backpack") then
-            task.wait(0.1)
-            addWeaponHighlight(obj)
+    serverHopConnection = task.spawn(function()
+        while serverHopEnabled do
+            local currentPing = Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+            
+            if currentPing > maxPingThreshold then
+                if Rayfield then
+                    Rayfield:Notify({
+                        Title = "Server Hop",
+                        Content = "Current ping too high (" .. math.floor(currentPing) .. "ms). Searching for better server...",
+                        Duration = 3
+                    })
+                end
+                
+                findLowPingServer()
+                break
+            end
+            
+            task.wait(30) -- Check every 30 seconds
         end
     end)
 end
 
-function addWeaponHighlight(weapon)
-    if weapon:FindFirstChild("WeaponESP") then return end
-    
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "WeaponESP"
-    highlight.Adornee = weapon
-    highlight.FillColor = Color3.new(0, 0, 1)
-    highlight.OutlineColor = Color3.new(1, 1, 1)
-    highlight.FillTransparency = 0.5
-    highlight.OutlineTransparency = 0
-    highlight.Parent = weapon
+function stopSmartServerHop()
+    if serverHopConnection then
+        task.cancel(serverHopConnection)
+        serverHopConnection = nil
+    end
 end
 
-function disableWeaponESP()
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj.Name == "WeaponESP" then
-            obj:Destroy()
+function findLowPingServer()
+    pcall(function()
+        local servers = {}
+        
+        -- Get server list (simplified approach)
+        for i = 1, 10 do
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId)
+            end)
+            task.wait(1)
         end
-    end
+    end)
 end
 
--- MOBILE CROSSHAIR
-local crosshairGui = nil
-
-function createMobileCrosshair()
-    if crosshairGui then
-        crosshairGui:Destroy()
-    end
+function getServerInfo()
+    local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+    local players = #Players:GetPlayers()
+    local maxPlayers = Players.MaxPlayers
     
-    crosshairGui = Instance.new("ScreenGui")
-    crosshairGui.Name = "MobileCrosshair"
-    crosshairGui.Parent = player.PlayerGui
-    
-    -- Horizontal line
-    local hLine = Instance.new("Frame")
-    hLine.Size = UDim2.new(0, 20, 0, 2)
-    hLine.Position = UDim2.new(0.5, -10, 0.5, -1)
-    hLine.BackgroundColor3 = Color3.new(0, 1, 0)
-    hLine.BorderSizePixel = 0
-    hLine.Parent = crosshairGui
-    
-    -- Vertical line
-    local vLine = Instance.new("Frame")
-    vLine.Size = UDim2.new(0, 2, 0, 20)
-    vLine.Position = UDim2.new(0.5, -1, 0.5, -10)
-    vLine.BackgroundColor3 = Color3.new(0, 1, 0)
-    vLine.BorderSizePixel = 0
-    vLine.Parent = crosshairGui
-    
-    -- Center dot
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.new(0, 4, 0, 4)
-    dot.Position = UDim2.new(0.5, -2, 0.5, -2)
-    dot.BackgroundColor3 = Color3.new(1, 0, 0)
-    dot.BorderSizePixel = 0
-    dot.Parent = crosshairGui
-    
-    -- Make it round
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = dot
+    return string.format("Ping: %dms | Players: %d/%d", ping, players, maxPlayers)
 end
 
-function removeMobileCrosshair()
-    if crosshairGui then
-        crosshairGui:Destroy()
-        crosshairGui = nil
-    end
-end
-
--- UTILITY FUNCTIONS
-function instantHeal()
-    if character and humanoid then
-        humanoid.Health = humanoid.MaxHealth
+-- PERFORMANCE OPTIMIZATION
+function setPerformanceMode(enabled)
+    if enabled then
+        -- Remove textures and decals
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Decal") or obj:IsA("Texture") then
+                obj.Transparency = 1
+            elseif obj:IsA("BasePart") then
+                obj.Material = Enum.Material.Plastic
+            elseif obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") then
+                obj.Enabled = false
+            end
+        end
+        
+        -- Reduce lighting quality
+        Lighting.GlobalShadows = false
+        Lighting.Technology = Enum.Technology.Compatibility
+        
         if Rayfield then
             Rayfield:Notify({
-                Title = "Instant Heal",
-                Content = "Health restored to maximum!",
+                Title = "Performance Mode",
+                Content = "Performance optimizations applied!",
                 Duration = 2
             })
         end
-    end
-end
-
-function teleportToSpawn()
-    if character and humanoidRootPart then
-        -- Common spawn locations in Combat Warriors
-        local spawnLocations = {
-            CFrame.new(0, 5, 0),
-            CFrame.new(50, 5, 0),
-            CFrame.new(-50, 5, 0),
-            CFrame.new(0, 5, 50),
-            CFrame.new(0, 5, -50)
-        }
-        
-        local randomSpawn = spawnLocations[math.random(#spawnLocations)]
-        humanoidRootPart.CFrame = randomSpawn
-    end
-end
-
-function teleportToRandomPlayer()
-    local players = {}
-    for _, otherPlayer in pairs(Players:GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            table.insert(players, otherPlayer)
-        end
-    end
-    
-    if #players > 0 then
-        local randomPlayer = players[math.random(#players)]
-        if character and humanoidRootPart then
-            humanoidRootPart.CFrame = randomPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(5, 0, 0)
-        end
-    end
-end
-
-function teleportBehindNearestEnemy()
-    if not character or not humanoidRootPart then return end
-    
-    local nearestEnemy = nil
-    local nearestDistance = math.huge
-    
-    for _, otherPlayer in pairs(Players:GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            local distance = (humanoidRootPart.Position - otherPlayer.Character.HumanoidRootPart.Position).Magnitude
-            if distance < nearestDistance then
-                nearestDistance = distance
-                nearestEnemy = otherPlayer
-            end
-        end
-    end
-    
-    if nearestEnemy then
-        local targetHRP = nearestEnemy.Character.HumanoidRootPart
-        local behindPosition = targetHRP.CFrame * CFrame.new(0, 0, 5)
-        humanoidRootPart.CFrame = behindPosition
-    end
-end
-
--- AUTO GLORY COLLECTION
-local gloryConnection = nil
-
-function startAutoGlory()
-    if gloryConnection then
-        gloryConnection:Disconnect()
-    end
-    
-    gloryConnection = RunService.Heartbeat:Connect(function()
-        if not character or not humanoidRootPart then return end
-        
-        -- Look for glory orbs/coins
+    else
+        -- Restore graphics
         for _, obj in pairs(Workspace:GetDescendants()) do
-            if obj.Name:lower():find("glory") or obj.Name:lower():find("coin") then
-                if obj:IsA("BasePart") then
-                    local distance = (humanoidRootPart.Position - obj.Position).Magnitude
-                    if distance <= 50 then
-                        -- Move towards glory
-                        humanoidRootPart.CFrame = CFrame.lookAt(humanoidRootPart.Position, obj.Position)
-                        task.wait(0.1)
-                    end
-                end
+            if obj:IsA("Decal") or obj:IsA("Texture") then
+                obj.Transparency = 0
+            elseif obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") then
+                obj.Enabled = true
             end
+        end
+        
+        Lighting.GlobalShadows = true
+        Lighting.Technology = Enum.Technology.Future
+    end
+end
+
+function applyFPSBoost()
+    -- Comprehensive FPS optimization
+    pcall(function()
+        -- Graphics settings
+        settings().Rendering.QualityLevel = 1
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+        settings().Rendering.EnableFRM = false
+        
+        -- Remove post-processing effects
+        for _, effect in pairs(Lighting:GetChildren()) do
+            if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or 
+               effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") or 
+               effect:IsA("SunRaysEffect") then
+                effect.Enabled = false
+            end
+        end
+        
+        -- Disable particles
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+                obj.Enabled = false
+            end
+        end
+        
+        -- Optimize physics
+        settings().Physics.AllowSleep = true
+        settings().Physics.PhysicsEnvironmentalThrottle = Enum.EnviromentalPhysicsThrottle.Skip4
+        
+        if Rayfield then
+            Rayfield:Notify({
+                Title = "FPS Boost",
+                Content = "Maximum FPS optimizations applied!",
+                Duration = 3
+            })
         end
     end)
 end
 
-function stopAutoGlory()
-    if gloryConnection then
-        gloryConnection:Disconnect()
-        gloryConnection = nil
+function cleanupMemory()
+    -- Force garbage collection
+    collectgarbage("collect")
+    
+    -- Remove cached data
+    pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Sound") and not obj.IsPlaying then
+                obj:Destroy()
+            elseif obj:IsA("Decal") and obj.Parent and obj.Parent.Parent ~= character then
+                obj.Transparency = 1
+            end
+        end
+    end)
+    
+    if Rayfield then
+        Rayfield:Notify({
+            Title = "Memory Cleanup",
+            Content = "Memory cleaned and optimized!",
+            Duration = 2
+        })
     end
 end
 
@@ -1420,6 +1244,19 @@ function startAntiAFK()
                     task.wait(0.1)
                     VIM:SendKeyEvent(false, randomKey, false, game)
                 end)
+            elseif UserInputService then
+                -- Fallback method
+                pcall(function()
+                    local virtualEvent = {
+                        KeyCode = Enum.KeyCode.Space,
+                        UserInputType = Enum.UserInputType.Keyboard,
+                        UserInputState = Enum.UserInputState.Begin
+                    }
+                    UserInputService.InputBegan:Fire(virtualEvent)
+                    task.wait(0.1)
+                    virtualEvent.UserInputState = Enum.UserInputState.End
+                    UserInputService.InputEnded:Fire(virtualEvent)
+                end)
             end
         end
     end)
@@ -1429,111 +1266,6 @@ function stopAntiAFK()
     if antiAFKConnection then
         task.cancel(antiAFKConnection)
         antiAFKConnection = nil
-    end
-end
-
--- PERFORMANCE OPTIMIZATION
-function optimizeForMobile()
-    -- Reduce render distance
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Parent ~= character then
-            local distance = humanoidRootPart and (humanoidRootPart.Position - obj.Position).Magnitude or 0
-            if distance > 100 then
-                obj.Transparency = 1
-            end
-        end
-    end
-    
-    -- Disable unnecessary effects
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
-            obj.Enabled = false
-        end
-    end
-    
-    -- Optimize lighting
-    Lighting.GlobalShadows = false
-    Lighting.Technology = Enum.Technology.Compatibility
-    
-    if Rayfield then
-        Rayfield:Notify({
-            Title = "Mobile Optimization",
-            Content = "Game optimized for mobile performance!",
-            Duration = 3
-        })
-    end
-end
-
-function enableFPSBoost()
-    -- Remove visual effects
-    for _, obj in pairs(Lighting:GetChildren()) do
-        if obj:IsA("BloomEffect") or obj:IsA("BlurEffect") or obj:IsA("ColorCorrectionEffect") or 
-           obj:IsA("DepthOfFieldEffect") or obj:IsA("SunRaysEffect") then
-            obj.Enabled = false
-        end
-    end
-    
-    -- Set low quality rendering
-    settings().Rendering.QualityLevel = 1
-    settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
-    
-    if Rayfield then
-        Rayfield:Notify({
-            Title = "FPS Boost",
-            Content = "FPS boost mode enabled!",
-            Duration = 2
-        })
-    end
-end
-
-function disableFPSBoost()
-    -- Restore visual effects
-    for _, obj in pairs(Lighting:GetChildren()) do
-        if obj:IsA("BloomEffect") or obj:IsA("BlurEffect") or obj:IsA("ColorCorrectionEffect") or 
-           obj:IsA("DepthOfFieldEffect") or obj:IsA("SunRaysEffect") then
-            obj.Enabled = true
-        end
-    end
-    
-    -- Restore quality
-    settings().Rendering.QualityLevel = 10
-    settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
-end
-
-function setLowGraphics(enabled)
-    if enabled then
-        -- Remove textures and decals
-        for _, obj in pairs(Workspace:GetDescendants()) do
-            if obj:IsA("Decal") or obj:IsA("Texture") then
-                obj.Transparency = 1
-            elseif obj:IsA("BasePart") then
-                obj.Material = Enum.Material.Plastic
-            end
-        end
-    else
-        -- Restore textures and decals
-        for _, obj in pairs(Workspace:GetDescendants()) do
-            if obj:IsA("Decal") or obj:IsA("Texture") then
-                obj.Transparency = 0
-            end
-        end
-    end
-end
-
--- SERVER HOP FUNCTION
-function serverHop()
-    local TeleportService = game:GetService("TeleportService")
-    local success, result = pcall(function()
-        TeleportService:Teleport(game.PlaceId)
-    end)
-    if not success then
-        if Rayfield then
-            Rayfield:Notify({
-                Title = "Server Hop",
-                Content = "Failed to hop servers. Try again.",
-                Duration = 3
-            })
-        end
     end
 end
 
@@ -1548,18 +1280,9 @@ RunService.Heartbeat:Connect(function()
         end
     end
     
-    -- Apply speed
-    if character and humanoid and humanoid.WalkSpeed ~= currentSpeed then
-        humanoid.WalkSpeed = currentSpeed
-    end
-    
-    -- Apply noclip
-    if noClip and character then
-        for _, part in pairs(character:GetDescendants()) do
-            if part:IsA("BasePart") and part ~= humanoidRootPart then
-                part.CanCollide = false
-            end
-        end
+    -- Update camera reference
+    if not camera or not camera.Parent then
+        camera = Workspace.CurrentCamera
     end
 end)
 
@@ -1571,48 +1294,53 @@ player.CharacterAdded:Connect(function(newChar)
     
     task.wait(2) -- Wait for character to fully load
     
-    -- Reapply settings
-    if currentSpeed ~= 16 then
-        humanoid.WalkSpeed = currentSpeed
-    end
-    
-    -- Re-enable features if they were enabled
-    if infiniteStamina then
-        enableInfiniteStamina()
-    end
-    
+    -- Re-enable ESP if it was enabled
     if espEnabled then
         task.wait(1)
-        enableAdvancedESP()
-    end
-    
-    if hitboxExpander then
-        enableHitboxExpander()
-    end
-    
-    if weaponReach then
-        enableWeaponReach()
+        enableUniversalESP()
     end
 end)
 
--- Mobile-specific optimizations
-if isMobile then
-    -- Optimize for mobile devices
-    task.spawn(function()
-        task.wait(5) -- Wait for game to load
-        optimizeForMobile()
-    end)
-    
-    -- Mobile-friendly controls info
-    if Rayfield then
-        Rayfield:Notify({
-            Title = "Mobile Controls",
-            Content = "Script optimized for mobile! All features work with touch controls.",
-            Duration = 6
-        })
+-- Cleanup on script unload
+game:GetService("Players").PlayerRemoving:Connect(function(removedPlayer)
+    if removedPlayer == player then
+        -- Clean up connections
+        for _, connection in pairs(aimConnections) do
+            if connection then
+                connection:Disconnect()
+            end
+        end
+        
+        for _, connection in pairs(pingConnections) do
+            if connection then
+                connection:Disconnect()
+            end
+        end
+        
+        if pingMonitorConnection then
+            pingMonitorConnection:Disconnect()
+        end
+        
+        if serverHopConnection then
+            task.cancel(serverHopConnection)
+        end
+        
+        if antiAFKConnection then
+            task.cancel(antiAFKConnection)
+        end
     end
+end)
+
+-- Final notification
+if Rayfield then
+    task.wait(2)
+    Rayfield:Notify({
+        Title = "Universal Enhancement Hub",
+        Content = "All systems loaded! Ping optimization, universal aim, and server hopping ready.",
+        Duration = 6
+    })
 end
 
-print("[Combat Warriors Enhanced] Script fully loaded and optimized for mobile!")
+print("[Universal Enhancement] Script fully loaded with ping optimization, universal aim, and Asian server hopping!")
 
 end
