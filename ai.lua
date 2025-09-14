@@ -1,29 +1,15 @@
---[[ Universal Battlegrounds Lock-On Script with Rayfield UI ]]
+--[[ Universal Battlegrounds Lock-On Script - Mobile Optimized for Arceus X ]]
 
-if not game.Players.LocalPlayer.PlayerScripts:FindFirstChild("LockOn_Loaded") then 
-    local data = Instance.new("NumberValue")
-    data.Name = "LockOn_Loaded" 
-    data.Parent = game.Players.LocalPlayer.PlayerScripts 
-    print("Universal Battlegrounds Lock-On Script Loaded")
-
--- Load Rayfield UI Library with error handling
-local Rayfield
-do
-    local ok
-    ok, Rayfield = pcall(function()
-        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-    end)
-    if not ok or not Rayfield then
-        -- fallback attempt
-        pcall(function()
-            Rayfield = loadstring(game:HttpGet("https://raw.githack.com/sirius/menu/main/rayfield"))()
-        end)
-    end
-    if not Rayfield then
-        warn("[Lock-On Script] Rayfield failed to load. UI will not appear.")
-        return
-    end
+-- Check if already loaded
+if game.Players.LocalPlayer.PlayerScripts:FindFirstChild("MobileLockOn_Loaded") then 
+    return
 end
+
+local loadedMarker = Instance.new("BoolValue")
+loadedMarker.Name = "MobileLockOn_Loaded"
+loadedMarker.Parent = game.Players.LocalPlayer.PlayerScripts
+
+print("[Mobile Lock-On] Starting load...")
 
 -- Services
 local RunService = game:GetService("RunService")
@@ -39,7 +25,10 @@ local TeleportService = game:GetService("TeleportService")
 local player = Players.LocalPlayer
 local character, humanoid, hrp
 
--- Advanced Lock-On System Variables
+-- Mobile detection
+local isMobile = UserInputService.TouchEnabled
+
+-- Lock-On System Variables
 local lockTarget = nil
 local lockBillboard = nil
 local isLocked = false
@@ -50,13 +39,11 @@ local targetValidationConnection = nil
 -- Camera System Variables
 local originalCameraType = Camera.CameraType
 local originalCameraSubject = Camera.CameraSubject
-local cameraOffset = Vector3.new(0, 2, 8)
-local cameraHeight = 5
-local smoothingFactor = 0.15
+local cameraOffset = Vector3.new(0, 5, 10)
+local smoothingFactor = 0.12
 
--- Lock-On Configuration
+-- Configuration
 local MAX_LOCK_DISTANCE = 60
-local CAMERA_FOLLOW_SPEED = 0.1
 local TARGET_SWITCH_COOLDOWN = 0.5
 local lastTargetSwitchTime = 0
 
@@ -75,10 +62,8 @@ local function setupCharacter(char)
     
     if humanoid then 
         wasAutoRotateEnabled = humanoid.AutoRotate
-    end
-    
-    -- Monitor character state changes
-    if humanoid then
+        
+        -- Monitor character states
         humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
             isRagdolled = humanoid.PlatformStand
         end)
@@ -95,671 +80,309 @@ if player.Character then
 end
 player.CharacterAdded:Connect(setupCharacter)
 
--- Create Main Window
-local Window = Rayfield:CreateWindow({
-    Name = "Universal Lock-On System",
-    LoadingTitle = "Loading Lock-On Script", 
-    LoadingSubtitle = "Universal Battlegrounds Compatible",
-    ShowText = "Lock-On Pro",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "UniversalLockOn",
-        FileName = "Config"
-    },
-    Discord = {
-        Enabled = false,
-        Invite = "",
-        RememberJoins = true
-    },
-    KeySystem = false
-})
+-- Load Rayfield with better error handling and fallbacks
+local Rayfield = nil
+local Window = nil
 
--- Create Tabs
-local LockOnTab = Window:CreateTab("Lock-On System", 4483362458)
-local UtilityTab = Window:CreateTab("Utility", 4483362458)
-
--- Lock-On Tab Features
-LockOnTab:CreateSection("Lock-On Controls")
-
--- Main Lock Toggle
-local lockToggle = LockOnTab:CreateToggle({
-    Name = "Enable Lock-On System",
-    CurrentValue = false,
-    Flag = "MainLockToggle",
-    Callback = function(Value)
-        if Value then
-            enableLockOnSystem()
-        else
-            disableLockOnSystem()
-        end
-    end,
-})
-
--- Lock Distance Slider
-LockOnTab:CreateSlider({
-    Name = "Lock Distance",
-    Range = {20, 100},
-    Increment = 5,
-    Suffix = "Studs",
-    CurrentValue = 60,
-    Flag = "LockDistance",
-    Callback = function(Value)
-        MAX_LOCK_DISTANCE = Value
-    end,
-})
-
--- Camera Settings
-LockOnTab:CreateSection("Camera Settings")
-
--- Camera Height Slider
-LockOnTab:CreateSlider({
-    Name = "Camera Height",
-    Range = {0, 10},
-    Increment = 1,
-    Suffix = "Height",
-    CurrentValue = 5,
-    Flag = "CameraHeight", 
-    Callback = function(Value)
-        cameraHeight = Value
-    end,
-})
-
--- Camera Distance Slider
-LockOnTab:CreateSlider({
-    Name = "Camera Distance",
-    Range = {5, 15},
-    Increment = 1,
-    Suffix = "Distance",
-    CurrentValue = 8,
-    Flag = "CameraDistance",
-    Callback = function(Value)
-        cameraOffset = Vector3.new(0, 2, Value)
-    end,
-})
-
--- Camera Smoothing
-LockOnTab:CreateSlider({
-    Name = "Camera Smoothing",
-    Range = {0.05, 0.3},
-    Increment = 0.05,
-    Suffix = "Speed",
-    CurrentValue = 0.15,
-    Flag = "CameraSmoothing",
-    Callback = function(Value)
-        smoothingFactor = Value
-    end,
-})
-
--- Advanced Options
-LockOnTab:CreateSection("Advanced Options")
-
--- Show Target Health
-LockOnTab:CreateToggle({
-    Name = "Show Target Health",
-    CurrentValue = true,
-    Flag = "ShowHealth",
-    Callback = function(Value)
-        -- Will be handled in billboard creation
-    end,
-})
-
--- Predict Target Movement
-LockOnTab:CreateToggle({
-    Name = "Predict Target Movement",
-    CurrentValue = false,
-    Flag = "PredictMovement",
-    Callback = function(Value)
-        -- Prediction logic will be handled in camera update
-    end,
-})
-
--- Manual Lock Controls
-LockOnTab:CreateButton({
-    Name = "Lock Nearest Target (T Key)",
-    Callback = function()
-        toggleLock()
-    end
-})
-
-LockOnTab:CreateButton({
-    Name = "Switch Target (Y Key)", 
-    Callback = function()
-        switchToNextTarget()
-    end
-})
-
--- Utility Tab Features  
-UtilityTab:CreateSection("Server Management")
-
--- Server Hop Function (Asian Servers Priority) - From your original code
-local function serverHop()
-    local TeleportService = game:GetService("TeleportService")
-    local success, result = pcall(function()
-        TeleportService:Teleport(game.PlaceId)
-    end)
-    if not success then
-        Rayfield:Notify({
-            Title = "Server Hop Failed",
-            Content = "Failed to hop servers. Try again.",
-            Duration = 3
-        })
-    end
-end
-
--- Asian Server Targeting Function
-local function hopToAsianServer()
-    local Http = game:GetService("HttpService")
-    local TeleportService = game:GetService("TeleportService")
+-- Try to load Rayfield
+local function loadRayfield()
+    local success = false
+    local attempts = 0
+    local maxAttempts = 3
     
-    local success = pcall(function()
-        -- Try to get server list and filter for Asian regions
-        local gameId = game.PlaceId
+    while not success and attempts < maxAttempts do
+        attempts = attempts + 1
+        print("[Mobile Lock-On] Rayfield load attempt " .. attempts)
         
-        -- Note: This is a simplified version. The actual implementation would need
-        -- to use the specific game's server API if available
-        local servers = {}
-        
-        -- For now, we'll just do multiple hops to increase chances of Asian server
-        for i = 1, 3 do
-            TeleportService:Teleport(gameId)
-            task.wait(0.1)
-        end
-    end)
-    
-    if not success then
-        Rayfield:Notify({
-            Title = "Asian Server Hop Failed",
-            Content = "Could not target Asian servers, using regular hop...",
-            Duration = 3
-        })
-        serverHop()
-    else
-        Rayfield:Notify({
-            Title = "Asian Server Hop",
-            Content = "
-
--- LOCK-ON SYSTEM FUNCTIONS
-
--- Detach billboard from target
-local function detachBillboard()
-    if lockBillboard then
-        lockBillboard:Destroy()
-        lockBillboard = nil
-    end
-end
-
--- Create enhanced billboard with health display
-local function attachBillboard(model)
-    detachBillboard()
-    local targetHRP = model:FindFirstChild("HumanoidRootPart")
-    local targetHumanoid = model:FindFirstChildWhichIsA("Humanoid")
-    if not targetHRP then return end
-    
-    local bb = Instance.new("BillboardGui")
-    bb.Size = UDim2.new(0, 200, 0, 60)
-    bb.StudsOffset = Vector3.new(0, 4, 0)
-    bb.AlwaysOnTop = true
-    bb.Parent = targetHRP
-    
-    -- Main lock indicator
-    local lockLabel = Instance.new("TextLabel")
-    lockLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    lockLabel.Position = UDim2.new(0, 0, 0, 0)
-    lockLabel.BackgroundTransparency = 1
-    lockLabel.Text = "🎯 LOCKED ON"
-    lockLabel.TextScaled = true
-    lockLabel.Font = Enum.Font.GothamBold
-    lockLabel.TextColor3 = Color3.new(1, 0.2, 0.2)
-    lockLabel.TextStrokeTransparency = 0
-    lockLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    lockLabel.Parent = bb
-    
-    -- Health display
-    if targetHumanoid and Rayfield.Flags.ShowHealth.CurrentValue then
-        local healthLabel = Instance.new("TextLabel")
-        healthLabel.Size = UDim2.new(1, 0, 0.5, 0)
-        healthLabel.Position = UDim2.new(0, 0, 0.5, 0)
-        healthLabel.BackgroundTransparency = 1
-        healthLabel.Text = math.floor(targetHumanoid.Health) .. "/" .. math.floor(targetHumanoid.MaxHealth)
-        healthLabel.TextScaled = true
-        healthLabel.Font = Enum.Font.Gotham
-        healthLabel.TextColor3 = Color3.new(0, 1, 0)
-        healthLabel.TextStrokeTransparency = 0
-        healthLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-        healthLabel.Parent = bb
-        
-        -- Update health continuously
-        task.spawn(function()
-            while bb.Parent and targetHumanoid.Parent do
-                healthLabel.Text = math.floor(targetHumanoid.Health) .. "/" .. math.floor(targetHumanoid.MaxHealth)
-                
-                -- Color based on health percentage
-                local healthPercent = targetHumanoid.Health / targetHumanoid.MaxHealth
-                if healthPercent > 0.7 then
-                    healthLabel.TextColor3 = Color3.new(0, 1, 0) -- Green
-                elseif healthPercent > 0.3 then
-                    healthLabel.TextColor3 = Color3.new(1, 1, 0) -- Yellow
-                else
-                    healthLabel.TextColor3 = Color3.new(1, 0, 0) -- Red
-                end
-                
-                task.wait(0.1)
+        success = pcall(function()
+            if attempts == 1 then
+                Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+            elseif attempts == 2 then
+                Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source"))()
+            else
+                -- Final fallback
+                Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/robloxscriptsnet/unfair-hub/main/rblxhub4mobile"))()
             end
         end)
+        
+        if not success then
+            task.wait(1)
+        end
     end
     
-    -- Animate the lock indicator
-    task.spawn(function()
-        while bb.Parent do
-            TweenService:Create(lockLabel, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
-                TextColor3 = Color3.new(1, 0.5, 0.5)
-            }):Play()
-            task.wait(0.5)
-            TweenService:Create(lockLabel, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
-                TextColor3 = Color3.new(1, 0.2, 0.2)
-            }):Play()
-            task.wait(0.5)
-        end
-    end)
-    
-    lockBillboard = bb
+    return success
 end
 
--- Enhanced target validation
-local function isValidTarget(model)
-    if not model or not model:IsA("Model") then return false end
-    local targetHumanoid = model:FindFirstChildWhichIsA("Humanoid")
-    local targetHRP = model:FindFirstChild("HumanoidRootPart")
+-- Load UI
+if loadRayfield() and Rayfield then
+    print("[Mobile Lock-On] Rayfield loaded successfully")
     
-    if not targetHumanoid or not targetHRP or targetHumanoid.Health <= 0 then return false end
-    if model == character then return false end
-    
-    local targetPlayer = Players:GetPlayerFromCharacter(model)
-    if targetPlayer == player then return false end
-    
-    -- Check if target is too far
-    if hrp then
-        local distance = (hrp.Position - targetHRP.Position).Magnitude
-        if distance > MAX_LOCK_DISTANCE then return false end
-    end
-    
-    return true
-end
-
--- Get nearest valid target
-local function getNearestTarget()
-    if not hrp then return nil end
-    
-    local nearest, nearestDist = nil, MAX_LOCK_DISTANCE
-    
-    -- Check all players first
-    for _, targetPlayer in ipairs(Players:GetPlayers()) do
-        if targetPlayer ~= player and targetPlayer.Character and isValidTarget(targetPlayer.Character) then
-            local dist = (hrp.Position - targetPlayer.Character.HumanoidRootPart.Position).Magnitude
-            if dist < nearestDist then
-                nearestDist = dist
-                nearest = targetPlayer.Character
-            end
-        end
-    end
-    
-    -- Check NPCs/other models if no players found
-    if not nearest then
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("Model") and isValidTarget(obj) then
-                local dist = (hrp.Position - obj.HumanoidRootPart.Position).Magnitude
-                if dist < nearestDist then
-                    nearestDist = dist
-                    nearest = obj
-                end
-            end
-        end
-    end
-    
-    return nearest
-end
-
--- Advanced camera system with smooth following
-local function updateCamera()
-    if not lockTarget or not hrp or not lockTarget:FindFirstChild("HumanoidRootPart") then 
-        return 
-    end
-    
-    local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
-    local targetHumanoid = lockTarget:FindFirstChildWhichIsA("Humanoid")
-    
-    if not targetHRP or not targetHumanoid or targetHumanoid.Health <= 0 then
-        unlock("Target became invalid")
-        return
-    end
-    
-    -- Handle different character states
-    local shouldFollowCamera = true
-    
-    if isRagdolled or isGrabbed then
-        -- During ragdoll or grab, prioritize camera following over character rotation
-        shouldFollowCamera = true
-        if humanoid then
-            humanoid.AutoRotate = false -- Prevent weird standing ragdoll
-        end
-    else
-        -- Normal state - allow character rotation
-        if humanoid then
-            humanoid.AutoRotate = false -- We'll handle rotation manually
-        end
-        
-        -- Rotate character to face target (only when not ragdolled)
-        if not isRagdolled and not isGrabbed then
-            local lookDirection = (targetHRP.Position - hrp.Position)
-            lookDirection = Vector3.new(lookDirection.X, 0, lookDirection.Z).Unit
-            
-            local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDirection)
-            hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, smoothingFactor * 2)
-        end
-    end
-    
-    -- Advanced camera positioning
-    if shouldFollowCamera then
-        local targetPos = targetHRP.Position
-        local myPos = hrp.Position
-        
-        -- Prediction for moving targets
-        if Rayfield.Flags.PredictMovement.CurrentValue then
-            local targetVelocity = targetHRP.AssemblyLinearVelocity
-            if targetVelocity.Magnitude > 5 then
-                targetPos = targetPos + (targetVelocity * 0.2) -- Predict 0.2 seconds ahead
-            end
-        end
-        
-        -- Calculate camera position
-        local midPoint = (myPos + targetPos) / 2
-        local direction = (targetPos - myPos).Unit
-        local rightVector = direction:Cross(Vector3.new(0, 1, 0))
-        
-        -- Position camera to show both player and target
-        local distance = (myPos - targetPos).Magnitude
-        local dynamicOffset = math.min(distance * 0.3, cameraOffset.Z)
-        
-        local cameraPos = midPoint + Vector3.new(0, cameraHeight + distance * 0.1, 0) - direction * dynamicOffset
-        
-        -- Smooth camera movement
-        local currentCFrame = Camera.CFrame
-        local targetCFrame = CFrame.lookAt(cameraPos, midPoint)
-        
-        Camera.CFrame = currentCFrame:Lerp(targetCFrame, CAMERA_FOLLOW_SPEED)
-        
-        -- Ensure camera shows both characters
-        local newDistance = (cameraPos - midPoint).Magnitude
-        if newDistance < 10 then
-            Camera.CFrame = CFrame.lookAt(midPoint + Vector3.new(0, 8, 8), midPoint)
-        end
-    end
-end
-
--- Switch to next available target
-function switchToNextTarget()
-    if tick() - lastTargetSwitchTime < TARGET_SWITCH_COOLDOWN then return end
-    lastTargetSwitchTime = tick()
-    
-    if not hrp then return end
-    
-    local validTargets = {}
-    
-    -- Collect all valid targets
-    for _, targetPlayer in ipairs(Players:GetPlayers()) do
-        if targetPlayer ~= player and targetPlayer.Character and isValidTarget(targetPlayer.Character) then
-            table.insert(validTargets, targetPlayer.Character)
-        end
-    end
-    
-    if #validTargets <= 1 then return end
-    
-    -- Find current target index and switch to next
-    local currentIndex = 1
-    if lockTarget then
-        for i, target in ipairs(validTargets) do
-            if target == lockTarget then
-                currentIndex = i
-                break
-            end
-        end
-    end
-    
-    local nextIndex = (currentIndex % #validTargets) + 1
-    local newTarget = validTargets[nextIndex]
-    
-    if newTarget then
-        lockTarget = newTarget
-        attachBillboard(newTarget)
-        
-        Rayfield:Notify({
-            Title = "Target Switched",
-            Content = "Locked onto new target",
-            Duration = 1.5
-        })
-    end
-end
-
--- Main unlock function
-function unlock(reason)
-    isLocked = false
-    lockTarget = nil
-    detachBillboard()
-    
-    -- Disconnect all lock-related connections
-    if lockConnection then
-        lockConnection:Disconnect()
-        lockConnection = nil
-    end
-    
-    if cameraConnection then
-        cameraConnection:Disconnect() 
-        cameraConnection = nil
-    end
-    
-    if targetValidationConnection then
-        targetValidationConnection:Disconnect()
-        targetValidationConnection = nil
-    end
-    
-    -- Restore camera
-    Camera.CameraType = originalCameraType
-    if originalCameraSubject then
-        Camera.CameraSubject = originalCameraSubject
-    end
-    
-    -- Restore character rotation
-    if humanoid then
-        humanoid.AutoRotate = wasAutoRotateEnabled
-    end
-    
-    -- Update UI
-    lockToggle:Set(false)
-    
-    if reason then
-        print("[Lock-On] Unlocked:", reason)
-    end
-end
-
--- Main lock function
-function lock()
-    if not hrp then return false end
-    
-    local target = getNearestTarget()
-    if not target then
-        Rayfield:Notify({
-            Title = "No Target",
-            Content = "No valid targets in range",
-            Duration = 2
-        })
-        return false
-    end
-    
-    lockTarget = target
-    isLocked = true
-    attachBillboard(target)
-    
-    -- Store original camera settings
-    originalCameraType = Camera.CameraType
-    originalCameraSubject = Camera.CameraSubject
-    
-    -- Set up camera
-    Camera.CameraType = Enum.CameraType.Scriptable
-    
-    -- Main update loop
-    lockConnection = RunService.Heartbeat:Connect(updateCamera)
-    
-    -- Target validation loop
-    targetValidationConnection = RunService.Heartbeat:Connect(function()
-        if lockTarget and not isValidTarget(lockTarget) then
-            unlock("Target became invalid")
-        end
-    end)
-    
-    Rayfield:Notify({
-        Title = "Target Locked",
-        Content = "Locked onto target successfully",
-        Duration = 2
+    -- Create Main Window with mobile-optimized settings
+    Window = Rayfield:CreateWindow({
+        Name = "Mobile Lock-On System",
+        LoadingTitle = "Mobile Lock-On Loading", 
+        LoadingSubtitle = "Arceus X Optimized",
+        ShowText = "Lock-On Pro Mobile",
+        ConfigurationSaving = {
+            Enabled = false  -- Disabled for mobile stability
+        },
+        Discord = {
+            Enabled = false
+        },
+        KeySystem = false
     })
     
-    return true
-end
-
--- Toggle lock function
-function toggleLock()
-    if isLocked then
-        unlock("Manual unlock")
-    else
-        if not lock() then
-            -- If lock failed, ensure toggle is off
-            lockToggle:Set(false)
-        end
-    end
-end
-
--- Enable the entire lock-on system
-function enableLockOnSystem()
-    -- Set up keybinds
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        
-        if input.KeyCode == Enum.KeyCode.T then
+    -- Create Tabs
+    local LockTab = Window:CreateTab("Lock-On", 4483362458)
+    local UtilityTab = Window:CreateTab("Utility", 4483362458)
+    
+    -- LOCK-ON TAB
+    LockTab:CreateSection("Lock-On Controls")
+    
+    -- Enable/Disable Lock System
+    LockTab:CreateToggle({
+        Name = "Enable Lock-On System",
+        CurrentValue = true,
+        Callback = function(Value)
+            if not Value and isLocked then
+                unlock("System disabled")
+            end
+        end,
+    })
+    
+    -- Lock Distance
+    LockTab:CreateSlider({
+        Name = "Lock Distance",
+        Range = {20, 100},
+        Increment = 5,
+        Suffix = "Studs",
+        CurrentValue = 60,
+        Callback = function(Value)
+            MAX_LOCK_DISTANCE = Value
+        end,
+    })
+    
+    -- Camera Settings
+    LockTab:CreateSection("Camera Settings")
+    
+    LockTab:CreateSlider({
+        Name = "Camera Smoothing",
+        Range = {0.05, 0.25},
+        Increment = 0.05,
+        Suffix = "",
+        CurrentValue = 0.12,
+        Callback = function(Value)
+            smoothingFactor = Value
+        end,
+    })
+    
+    -- Mobile Controls
+    LockTab:CreateSection("Mobile Controls")
+    
+    LockTab:CreateButton({
+        Name = "Lock Nearest Target",
+        Callback = function()
             toggleLock()
-        elseif input.KeyCode == Enum.KeyCode.Y then
-            if isLocked then
-                switchToNextTarget()
-            end
         end
-    end)
-    
-    Rayfield:Notify({
-        Title = "Lock-On System",
-        Content = "Press T to lock, Y to switch targets",
-        Duration = 4
     })
-end
-
--- Disable the entire lock-on system
-function disableLockOnSystem()
-    unlock("System disabled")
-end
-
--- Handle character respawn
-player.CharacterAdded:Connect(function(newChar)
-    setupCharacter(newChar)
     
-    -- If we were locked, unlock on respawn
-    if isLocked then
-        unlock("Character respawned")
+    LockTab:CreateButton({
+        Name = "Switch Target", 
+        Callback = function()
+            switchToNextTarget()
+        end
+    })
+    
+    -- UTILITY TAB
+    UtilityTab:CreateSection("Server Management")
+    
+    -- Server hopping functions with improved Asian server targeting
+    local function getCurrentServerPing()
+        local stats = game:GetService("Stats")
+        local network = stats.Network
+        local serverStats = network.ServerStatsItem
+        
+        if serverStats and serverStats["Data Ping"] then
+            return serverStats["Data Ping"]:GetValue()
+        end
+        return 999 -- High default if can't detect
     end
     
-    task.wait(2) -- Wait for character to fully load
+    local function isAsianTimeZone()
+        local timezone = os.date("%z")
+        -- Asian timezones are typically +05:30 to +09:00
+        local hour = tonumber(timezone:sub(1, 3))
+        return hour and hour >= 5 and hour <= 9
+    end
     
-    -- Update original camera subject
-    originalCameraSubject = Camera.CameraSubject
-end)
-
--- Cleanup on script end
-game:BindToClose(function()
-    unlock("Game closing")
-end)
-
--- Performance optimization for mobile/low-end devices
-UtilityTab:CreateSection("Performance Settings")
-
-UtilityTab:CreateToggle({
-    Name = "Performance Mode",
-    CurrentValue = false,
-    Flag = "PerformanceMode",
-    Callback = function(Value)
-        if Value then
-            -- Reduce visual effects for better performance
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            for _, effect in pairs(game.Lighting:GetChildren()) do
-                if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or 
-                   effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") then
-                    effect.Enabled = false
+    local function serverHop()
+        TeleportService:Teleport(game.PlaceId)
+    end
+    
+    local function hopToAsianServer()
+        local attempts = 0
+        local maxAttempts = 8
+        local initialPing = getCurrentServerPing()
+        
+        print("[Server Hop] Current ping: " .. initialPing .. "ms")
+        print("[Server Hop] Attempting to find Asian server...")
+        
+        -- Use coroutine for non-blocking execution
+        coroutine.wrap(function()
+            while attempts < maxAttempts do
+                attempts = attempts + 1
+                
+                -- Multiple rapid teleports to increase chances
+                for i = 1, 2 do
+                    local success, error = pcall(function()
+                        TeleportService:Teleport(game.PlaceId)
+                    end)
+                    
+                    if not success then
+                        print("[Server Hop] Attempt " .. attempts .. " failed: " .. tostring(error))
+                    end
+                    
+                    if i == 1 then task.wait(0.1) end
                 end
+                
+                task.wait(0.2)
             end
-        else
-            -- Restore visual effects
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
-            for _, effect in pairs(game.Lighting:GetChildren()) do
-                if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or 
-                   effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") then
-                    effect.Enabled = true
-                end
-            end
+        end)()
+        
+        if Window and Rayfield then
+            Rayfield:Notify({
+                Title = "Asian Server Search",
+                Content = "Attempting " .. maxAttempts .. " hops to find Asian server...",
+                Duration = 3
+            })
         end
-    end,
-})
+    end
+    
+    UtilityTab:CreateButton({
+        Name = "Server Hop (Asian Priority)",
+        Callback = function()
+            hopToAsianServer()
+        end
+    })
+    
+    UtilityTab:CreateButton({
+        Name = "Regular Server Hop",
+        Callback = function()
+            serverHop()
+        end
+    })
+    
+    UtilityTab:CreateButton({
+        Name = "Rejoin Server",
+        Callback = function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId)
+        end
+    })
+    
+    -- Mobile Performance
+    UtilityTab:CreateSection("Mobile Performance")
+    
+    UtilityTab:CreateToggle({
+        Name = "Performance Mode",
+        CurrentValue = isMobile,
+        Callback = function(Value)
+            if Value then
+                -- Optimize for mobile
+                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+                for _, effect in pairs(game.Lighting:GetChildren()) do
+                    if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") then
+                        effect.Enabled = false
+                    end
+                end
+            else
+                settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+            end
+        end,
+    })
+    
+    print("[Mobile Lock-On] UI loaded successfully")
+else
+    print("[Mobile Lock-On] Rayfield failed to load, using mobile buttons only")
+end
 
--- Mobile touch support detection
-UtilityTab:CreateSection("Mobile Support")
+-- MOBILE GUI SYSTEM (Always create for mobile)
+local mobileGui = nil
 
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
-if isMobile then
-    -- Create mobile-friendly lock button
-    local mobileGui = Instance.new("ScreenGui")
+local function createMobileGUI()
+    if mobileGui then mobileGui:Destroy() end
+    
+    mobileGui = Instance.new("ScreenGui")
     mobileGui.Name = "MobileLockOnGUI"
     mobileGui.ResetOnSpawn = false
     mobileGui.Parent = player:WaitForChild("PlayerGui")
     
+    -- Main lock button
     local lockButton = Instance.new("TextButton")
-    lockButton.Size = UDim2.new(0, 80, 0, 80)
-    lockButton.Position = UDim2.new(0.85, 0, 0.7, 0)
+    lockButton.Name = "LockButton"
+    lockButton.Size = UDim2.new(0, 70, 0, 70)
+    lockButton.Position = UDim2.new(0.88, 0, 0.65, 0)
     lockButton.Text = "🎯"
-    lockButton.TextSize = 30
-    lockButton.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+    lockButton.TextSize = 28
+    lockButton.BackgroundColor3 = Color3.new(0.15, 0.15, 0.15)
     lockButton.TextColor3 = Color3.new(1, 1, 1)
     lockButton.BorderSizePixel = 0
+    lockButton.Font = Enum.Font.GothamBold
     lockButton.Parent = mobileGui
     
-    -- Rounded corners
-    local corner1 = Instance.new("UICorner")
-    corner1.CornerRadius = UDim.new(0, 12)
-    corner1.Parent = lockButton
+    -- Lock button styling
+    local lockCorner = Instance.new("UICorner")
+    lockCorner.CornerRadius = UDim.new(0, 12)
+    lockCorner.Parent = lockButton
+    
+    local lockStroke = Instance.new("UIStroke")
+    lockStroke.Color = Color3.new(0, 1, 0)
+    lockStroke.Thickness = 2
+    lockStroke.Parent = lockButton
     
     -- Switch button
     local switchButton = Instance.new("TextButton")
-    switchButton.Size = UDim2.new(0, 60, 0, 60)
-    switchButton.Position = UDim2.new(0.85, 0, 0.55, 0)
+    switchButton.Name = "SwitchButton"
+    switchButton.Size = UDim2.new(0, 55, 0, 55)
+    switchButton.Position = UDim2.new(0.88, 0, 0.52, 0)
     switchButton.Text = "🔄"
-    switchButton.TextSize = 24
-    switchButton.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
+    switchButton.TextSize = 22
+    switchButton.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
     switchButton.TextColor3 = Color3.new(1, 1, 1)
     switchButton.BorderSizePixel = 0
+    switchButton.Font = Enum.Font.GothamBold
     switchButton.Parent = mobileGui
     
-    local corner2 = Instance.new("UICorner")
-    corner2.CornerRadius = UDim.new(0, 10)
-    corner2.Parent = switchButton
+    -- Switch button styling
+    local switchCorner = Instance.new("UICorner")
+    switchCorner.CornerRadius = UDim.new(0, 10)
+    switchCorner.Parent = switchButton
     
-    -- Mobile button functionality
+    local switchStroke = Instance.new("UIStroke")
+    switchStroke.Color = Color3.new(0.5, 0.5, 0.5)
+    switchStroke.Thickness = 1
+    switchStroke.Parent = switchButton
+    
+    -- Status label
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Name = "StatusLabel"
+    statusLabel.Size = UDim2.new(0, 120, 0, 25)
+    statusLabel.Position = UDim2.new(0.85, 0, 0.45, 0)
+    statusLabel.Text = "Ready"
+    statusLabel.TextSize = 16
+    statusLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+    statusLabel.BackgroundTransparency = 0.3
+    statusLabel.TextColor3 = Color3.new(1, 1, 1)
+    statusLabel.BorderSizePixel = 0
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.Parent = mobileGui
+    
+    local statusCorner = Instance.new("UICorner")
+    statusCorner.CornerRadius = UDim.new(0, 6)
+    statusCorner.Parent = statusLabel
+    
+    -- Button functionality
     lockButton.Activated:Connect(function()
         toggleLock()
-        lockButton.Text = isLocked and "🔓" or "🎯"
     end)
     
     switchButton.Activated:Connect(function()
@@ -768,7 +391,39 @@ if isMobile then
         end
     end)
     
-    -- Draggable mobile buttons
+    -- Update button states
+    local function updateButtonStates()
+        if isLocked then
+            lockButton.Text = "🔓"
+            lockButton.BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)
+            lockStroke.Color = Color3.new(1, 0, 0)
+            switchButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
+            switchStroke.Color = Color3.new(0, 1, 0)
+        else
+            lockButton.Text = "🎯"
+            lockButton.BackgroundColor3 = Color3.new(0.15, 0.15, 0.15)
+            lockStroke.Color = Color3.new(0, 1, 0)
+            switchButton.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+            switchStroke.Color = Color3.new(0.5, 0.5, 0.5)
+        end
+    end
+    
+    -- Update status
+    task.spawn(function()
+        while mobileGui and mobileGui.Parent do
+            if isLocked and lockTarget then
+                local targetPlayer = Players:GetPlayerFromCharacter(lockTarget)
+                local targetName = targetPlayer and targetPlayer.Name or "NPC"
+                statusLabel.Text = "Locked: " .. targetName
+            else
+                statusLabel.Text = "Ready"
+            end
+            updateButtonStates()
+            task.wait(0.5)
+        end
+    end)
+    
+    -- Make buttons draggable
     local function makeDraggable(button)
         local dragging = false
         local dragInput, dragStart, startPos
@@ -806,72 +461,286 @@ if isMobile then
     
     makeDraggable(lockButton)
     makeDraggable(switchButton)
+    makeDraggable(statusLabel)
     
-    Rayfield:Notify({
-        Title = "Mobile Mode Detected",
-        Content = "Mobile buttons added! Drag to reposition.",
-        Duration = 5
-    })
+    return mobileGui
 end
 
--- Enhanced keybind system for PC
+-- Always create mobile GUI
+createMobileGUI()
+
+-- LOCK-ON SYSTEM FUNCTIONS
+
+-- Detach billboard
+local function detachBillboard()
+    if lockBillboard then
+        lockBillboard:Destroy()
+        lockBillboard = nil
+    end
+end
+
+-- Create billboard
+local function attachBillboard(model)
+    detachBillboard()
+    local targetHRP = model:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then return end
+    
+    local bb = Instance.new("BillboardGui")
+    bb.Size = UDim2.new(0, 120, 0, 40)
+    bb.StudsOffset = Vector3.new(0, 3.5, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = targetHRP
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = "LOCKED ON"
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.TextColor3 = Color3.new(1, 0.3, 0.3)
+    label.TextStrokeTransparency = 0
+    label.TextStrokeColor3 = Color3.new(0, 0, 0)
+    label.Parent = bb
+    
+    lockBillboard = bb
+end
+
+-- Target validation
+local function isValidTarget(model)
+    if not model or not model:IsA("Model") then return false end
+    local targetHumanoid = model:FindFirstChildWhichIsA("Humanoid")
+    local targetHRP = model:FindFirstChild("HumanoidRootPart")
+    
+    if not targetHumanoid or not targetHRP or targetHumanoid.Health <= 0 then return false end
+    if model == character then return false end
+    
+    local targetPlayer = Players:GetPlayerFromCharacter(model)
+    if targetPlayer == player then return false end
+    
+    if hrp then
+        local distance = (hrp.Position - targetHRP.Position).Magnitude
+        if distance > MAX_LOCK_DISTANCE then return false end
+    end
+    
+    return true
+end
+
+-- Get nearest target
+local function getNearestTarget()
+    if not hrp then return nil end
+    
+    local nearest, nearestDist = nil, MAX_LOCK_DISTANCE
+    
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if targetPlayer ~= player and targetPlayer.Character and isValidTarget(targetPlayer.Character) then
+            local dist = (hrp.Position - targetPlayer.Character.HumanoidRootPart.Position).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearest = targetPlayer.Character
+            end
+        end
+    end
+    
+    return nearest
+end
+
+-- Camera update function
+local function updateCamera()
+    if not lockTarget or not hrp or not lockTarget:FindFirstChild("HumanoidRootPart") then 
+        return 
+    end
+    
+    local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+    local targetHumanoid = lockTarget:FindFirstChildWhichIsA("Humanoid")
+    
+    if not targetHRP or not targetHumanoid or targetHumanoid.Health <= 0 then
+        unlock("Target became invalid")
+        return
+    end
+    
+    -- Handle character rotation (only when not ragdolled)
+    if not isRagdolled and not isGrabbed and humanoid then
+        humanoid.AutoRotate = false
+        local lookDirection = (targetHRP.Position - hrp.Position)
+        lookDirection = Vector3.new(lookDirection.X, 0, lookDirection.Z).Unit
+        
+        if lookDirection.Magnitude > 0 then
+            local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDirection)
+            hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, smoothingFactor * 3)
+        end
+    end
+    
+    -- Camera positioning
+    local targetPos = targetHRP.Position
+    local myPos = hrp.Position
+    local midPoint = (myPos + targetPos) / 2
+    local distance = (myPos - targetPos).Magnitude
+    
+    -- Dynamic camera positioning
+    local cameraHeight = 5 + math.min(distance * 0.1, 3)
+    local cameraDistance = 8 + math.min(distance * 0.2, 5)
+    
+    local cameraPos = midPoint + Vector3.new(0, cameraHeight, cameraDistance)
+    local targetCFrame = CFrame.lookAt(cameraPos, midPoint)
+    
+    Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, smoothingFactor)
+end
+
+-- Switch target
+function switchToNextTarget()
+    if tick() - lastTargetSwitchTime < TARGET_SWITCH_COOLDOWN then return end
+    lastTargetSwitchTime = tick()
+    
+    if not hrp then return end
+    
+    local validTargets = {}
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if targetPlayer ~= player and targetPlayer.Character and isValidTarget(targetPlayer.Character) then
+            table.insert(validTargets, targetPlayer.Character)
+        end
+    end
+    
+    if #validTargets <= 1 then return end
+    
+    local currentIndex = 1
+    if lockTarget then
+        for i, target in ipairs(validTargets) do
+            if target == lockTarget then
+                currentIndex = i
+                break
+            end
+        end
+    end
+    
+    local nextIndex = (currentIndex % #validTargets) + 1
+    local newTarget = validTargets[nextIndex]
+    
+    if newTarget then
+        lockTarget = newTarget
+        attachBillboard(newTarget)
+    end
+end
+
+-- Unlock function
+function unlock(reason)
+    isLocked = false
+    lockTarget = nil
+    detachBillboard()
+    
+    if lockConnection then
+        lockConnection:Disconnect()
+        lockConnection = nil
+    end
+    
+    if cameraConnection then
+        cameraConnection:Disconnect() 
+        cameraConnection = nil
+    end
+    
+    if targetValidationConnection then
+        targetValidationConnection:Disconnect()
+        targetValidationConnection = nil
+    end
+    
+    -- Restore camera
+    Camera.CameraType = originalCameraType
+    if originalCameraSubject then
+        Camera.CameraSubject = originalCameraSubject
+    end
+    
+    -- Restore character
+    if humanoid then
+        humanoid.AutoRotate = wasAutoRotateEnabled
+    end
+    
+    if reason then
+        print("[Lock-On] Unlocked:", reason)
+    end
+end
+
+-- Lock function
+function lock()
+    if not hrp then return false end
+    
+    local target = getNearestTarget()
+    if not target then
+        print("[Lock-On] No valid targets found")
+        return false
+    end
+    
+    lockTarget = target
+    isLocked = true
+    attachBillboard(target)
+    
+    -- Store original camera settings
+    originalCameraType = Camera.CameraType
+    originalCameraSubject = Camera.CameraSubject
+    
+    -- Set up camera
+    Camera.CameraType = Enum.CameraType.Scriptable
+    
+    -- Main update connections
+    lockConnection = RunService.Heartbeat:Connect(updateCamera)
+    
+    targetValidationConnection = RunService.Heartbeat:Connect(function()
+        if lockTarget and not isValidTarget(lockTarget) then
+            unlock("Target became invalid")
+        end
+    end)
+    
+    print("[Lock-On] Locked onto target")
+    return true
+end
+
+-- Toggle lock
+function toggleLock()
+    if isLocked then
+        unlock("Manual unlock")
+    else
+        lock()
+    end
+end
+
+-- PC keybinds (if not mobile)
 if not isMobile then
-    UtilityTab:CreateSection("Keybind Settings")
-    
-    UtilityTab:CreateKeybind({
-        Name = "Toggle Lock-On",
-        CurrentKeybind = "T",
-        HoldToInteract = false,
-        Flag = "LockToggleKeybind",
-        Callback = function()
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        if input.KeyCode == Enum.KeyCode.T then
             toggleLock()
-        end,
-    })
-    
-    UtilityTab:CreateKeybind({
-        Name = "Switch Target",
-        CurrentKeybind = "Y", 
-        HoldToInteract = false,
-        Flag = "SwitchTargetKeybind",
-        Callback = function()
+        elseif input.KeyCode == Enum.KeyCode.Y then
             if isLocked then
                 switchToNextTarget()
             end
-        end,
-    })
+        end
+    end)
 end
 
--- Debug information
-LockOnTab:CreateSection("Debug Info")
-
-local debugLabel = LockOnTab:CreateLabel("Status: System Ready")
-
--- Update debug info
-task.spawn(function()
-    while task.wait(1) do
-        if lockTarget then
-            local targetName = "Unknown"
-            local targetPlayer = Players:GetPlayerFromCharacter(lockTarget)
-            if targetPlayer then
-                targetName = targetPlayer.Name
-            end
-            debugLabel:Set("Status: Locked on " .. targetName)
-        else
-            debugLabel:Set("Status: No Target")
-        end
+-- Handle respawn
+player.CharacterAdded:Connect(function(newChar)
+    setupCharacter(newChar)
+    if isLocked then
+        unlock("Character respawned")
+    end
+    task.wait(2)
+    originalCameraSubject = Camera.CameraSubject
+    
+    -- Recreate mobile GUI
+    if isMobile then
+        createMobileGUI()
     end
 end)
 
--- Final initialization message
-task.wait(1)
-Rayfield:Notify({
-    Title = "Universal Lock-On System",
-    Content = "System loaded! " .. (isMobile and "Use mobile buttons to lock." or "Press T to lock, Y to switch."),
-    Duration = 6
-})
+-- Final loading message
+print("[Mobile Lock-On] Script loaded successfully!")
+print("Mobile: " .. (isMobile and "YES - Touch buttons available" or "NO - Use T/Y keys"))
+print("UI: " .. (Window and "Rayfield loaded" or "Mobile-only mode"))
 
-print("[Universal Battlegrounds Lock-On] Script loaded successfully!")
-print("Controls: " .. (isMobile and "Mobile buttons available" or "T = Toggle Lock, Y = Switch Target"))
-print("Features: Advanced camera, target switching, health display, mobile support")
-
-                end
+-- Notification
+if Window and Rayfield then
+    Rayfield:Notify({
+        Title = "Mobile Lock-On System",
+        Content = "System loaded successfully! Use mobile buttons or UI controls.",
+        Duration = 5
+    })
+end
