@@ -1,1313 +1,877 @@
---[[ Working Universal Script for Arceus X Mobile - Fixed Version ]]
+--[[ Universal Battlegrounds Lock-On Script with Rayfield UI ]]
 
--- Prevent duplicate loading
-if getgenv().UniversalScriptLoaded then
-    warn("Universal Script already loaded!")
-    return
-end
-getgenv().UniversalScriptLoaded = true
+if not game.Players.LocalPlayer.PlayerScripts:FindFirstChild("LockOn_Loaded") then 
+    local data = Instance.new("NumberValue")
+    data.Name = "LockOn_Loaded" 
+    data.Parent = game.Players.LocalPlayer.PlayerScripts 
+    print("Universal Battlegrounds Lock-On Script Loaded")
 
-print("Loading Working Universal Script...")
-
--- Enhanced UI Library Loading with multiple fallbacks
+-- Load Rayfield UI Library with error handling
 local Rayfield
-local function loadUI()
-    local libraries = {
-        function() return loadstring(game:HttpGet("https://sirius.menu/rayfield"))() end,
-        function() return loadstring(game:HttpGet("https://raw.githubusercontent.com/UI-Interface/CustomFIeld/main/RayField.lua"))() end,
-        function() return loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source"))() end
-    }
-    
-    for i, lib in pairs(libraries) do
-        local success, result = pcall(lib)
-        if success and result then
-            print("UI Library loaded from source " .. i)
-            return result
-        end
+do
+    local ok
+    ok, Rayfield = pcall(function()
+        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+    end)
+    if not ok or not Rayfield then
+        -- fallback attempt
+        pcall(function()
+            Rayfield = loadstring(game:HttpGet("https://raw.githack.com/sirius/menu/main/rayfield"))()
+        end)
     end
-    return nil
-end
-
-Rayfield = loadUI()
-if not Rayfield then
-    warn("Failed to load UI library!")
-    return
+    if not Rayfield then
+        warn("[Lock-On Script] Rayfield failed to load. UI will not appear.")
+        return
+    end
 end
 
 -- Services
-local Services = {}
-Services.Players = game:GetService("Players")
-Services.RunService = game:GetService("RunService")
-Services.UserInputService = game:GetService("UserInputService")
-Services.TweenService = game:GetService("TweenService")
-Services.Workspace = game:GetService("Workspace")
-Services.Lighting = game:GetService("Lighting")
-Services.Stats = game:GetService("Stats")
-Services.HttpService = game:GetService("HttpService")
-Services.TeleportService = game:GetService("TeleportService")
-Services.VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 
--- Player References
-local Player = Services.Players.LocalPlayer
-local Mouse = Player:GetMouse()
-local Camera = Services.Workspace.CurrentCamera
+-- Player Variables
+local player = Players.LocalPlayer
+local character, humanoid, hrp
 
--- Character Management
-local Character, Humanoid, RootPart
-local function UpdateCharacter()
-    Character = Player.Character
-    if Character then
-        Humanoid = Character:WaitForChild("Humanoid", 5)
-        RootPart = Character:WaitForChild("HumanoidRootPart", 5)
+-- Advanced Lock-On System Variables
+local lockTarget = nil
+local lockBillboard = nil
+local isLocked = false
+local lockConnection = nil
+local cameraConnection = nil
+local targetValidationConnection = nil
+
+-- Camera System Variables
+local originalCameraType = Camera.CameraType
+local originalCameraSubject = Camera.CameraSubject
+local cameraOffset = Vector3.new(0, 2, 8)
+local cameraHeight = 5
+local smoothingFactor = 0.15
+
+-- Lock-On Configuration
+local MAX_LOCK_DISTANCE = 60
+local CAMERA_FOLLOW_SPEED = 0.1
+local TARGET_SWITCH_COOLDOWN = 0.5
+local lastTargetSwitchTime = 0
+
+-- Character state tracking
+local isRagdolled = false
+local isGrabbed = false
+local wasAutoRotateEnabled = true
+
+-- Setup character function
+local function setupCharacter(char)
+    character = char
+    if not character then return end
+    
+    humanoid = character:WaitForChild("Humanoid")
+    hrp = character:WaitForChild("HumanoidRootPart")
+    
+    if humanoid then 
+        wasAutoRotateEnabled = humanoid.AutoRotate
+    end
+    
+    -- Monitor character state changes
+    if humanoid then
+        humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+            isRagdolled = humanoid.PlatformStand
+        end)
+        
+        humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+            isGrabbed = humanoid.Sit
+        end)
     end
 end
-UpdateCharacter()
-Player.CharacterAdded:Connect(UpdateCharacter)
 
--- Global Configuration
-local Config = {
-    Aimbot = {
-        Enabled = false,
-        TeamCheck = true,
-        WallCheck = true,
-        VisibleCheck = true,
-        TargetPart = "Head",
-        FOV = 100,
-        Smoothness = 0.5,
-        Prediction = false
-    },
-    ESP = {
-        Enabled = false,
-        ShowBoxes = true,
-        ShowNames = true,
-        ShowDistance = true,
-        ShowHealth = false,
-        ShowTracers = false,
-        MaxDistance = 1000
-    },
-    Misc = {
-        WalkSpeed = 16,
-        JumpPower = 50,
-        AntiAFK = false,
-        FullBright = false,
-        NoClip = false,
-        InfJump = false,
-        Fly = false
-    }
-}
-
--- Storage
-local Connections = {}
-local ESP_Objects = {}
-local Target = nil
-local FOV_Circle = nil
-local ServerLocation = "Unknown"
-local CurrentPing = 0
-
--- Drawing API Check
-local Drawing = Drawing or {}
-if not Drawing.new then
-    warn("Drawing API not available - ESP features limited")
+-- Initialize character
+if player.Character then 
+    setupCharacter(player.Character) 
 end
+player.CharacterAdded:Connect(setupCharacter)
 
 -- Create Main Window
 local Window = Rayfield:CreateWindow({
-    Name = "Universal Hub V3 | Working Edition",
-    LoadingTitle = "Loading Universal Systems",
-    LoadingSubtitle = "Optimized for Arceus X Mobile",
-    ShowText = "Universal V3",
+    Name = "Universal Lock-On System",
+    LoadingTitle = "Loading Lock-On Script", 
+    LoadingSubtitle = "Universal Battlegrounds Compatible",
+    ShowText = "Lock-On Pro",
     ConfigurationSaving = {
         Enabled = true,
-        FolderName = "UniversalV3",
+        FolderName = "UniversalLockOn",
         FileName = "Config"
     },
     Discord = {
-        Enabled = false
+        Enabled = false,
+        Invite = "",
+        RememberJoins = true
     },
     KeySystem = false
 })
 
 -- Create Tabs
-local CombatTab = Window:CreateTab("🎯 Combat", 4483362458)
-local VisualTab = Window:CreateTab("👁 Visuals", 4483362458)
-local ServerTab = Window:CreateTab("🌐 Server", 4483362458)
-local MiscTab = Window:CreateTab("⚡ Misc", 4483362458)
-local InfoTab = Window:CreateTab("ℹ Info", 4483362458)
+local LockOnTab = Window:CreateTab("Lock-On System", 4483362458)
+local UtilityTab = Window:CreateTab("Utility", 4483362458)
 
--- COMBAT TAB - WORKING AIMBOT
-CombatTab:CreateSection("Universal Aimbot - All Games")
+-- Lock-On Tab Features
+LockOnTab:CreateSection("Lock-On Controls")
 
-local AimbotToggle = CombatTab:CreateToggle({
-    Name = "Enable Aimbot",
+-- Main Lock Toggle
+local lockToggle = LockOnTab:CreateToggle({
+    Name = "Enable Lock-On System",
     CurrentValue = false,
-    Flag = "AimbotEnabled",
+    Flag = "MainLockToggle",
     Callback = function(Value)
-        Config.Aimbot.Enabled = Value
         if Value then
-            StartAimbot()
+            enableLockOnSystem()
         else
-            StopAimbot()
+            disableLockOnSystem()
         end
     end,
 })
 
-CombatTab:CreateSlider({
-    Name = "Aimbot FOV",
-    Range = {10, 500},
+-- Lock Distance Slider
+LockOnTab:CreateSlider({
+    Name = "Lock Distance",
+    Range = {20, 100},
     Increment = 5,
-    Suffix = "°",
-    CurrentValue = 100,
-    Flag = "AimbotFOV",
+    Suffix = "Studs",
+    CurrentValue = 60,
+    Flag = "LockDistance",
     Callback = function(Value)
-        Config.Aimbot.FOV = Value
-        UpdateFOVCircle()
+        MAX_LOCK_DISTANCE = Value
     end,
 })
 
-CombatTab:CreateSlider({
-    Name = "Aimbot Smoothness",
-    Range = {0.01, 1},
-    Increment = 0.01,
-    CurrentValue = 0.5,
-    Flag = "AimbotSmooth",
+-- Camera Settings
+LockOnTab:CreateSection("Camera Settings")
+
+-- Camera Height Slider
+LockOnTab:CreateSlider({
+    Name = "Camera Height",
+    Range = {0, 10},
+    Increment = 1,
+    Suffix = "Height",
+    CurrentValue = 5,
+    Flag = "CameraHeight", 
     Callback = function(Value)
-        Config.Aimbot.Smoothness = Value
+        cameraHeight = Value
     end,
 })
 
-CombatTab:CreateDropdown({
-    Name = "Target Body Part",
-    Options = {"Head", "Torso", "HumanoidRootPart", "Random"},
-    CurrentOption = {"Head"},
-    MultipleOptions = false,
-    Flag = "TargetPart",
-    Callback = function(Option)
-        Config.Aimbot.TargetPart = Option[1]
+-- Camera Distance Slider
+LockOnTab:CreateSlider({
+    Name = "Camera Distance",
+    Range = {5, 15},
+    Increment = 1,
+    Suffix = "Distance",
+    CurrentValue = 8,
+    Flag = "CameraDistance",
+    Callback = function(Value)
+        cameraOffset = Vector3.new(0, 2, Value)
     end,
 })
 
-CombatTab:CreateToggle({
-    Name = "Team Check",
+-- Camera Smoothing
+LockOnTab:CreateSlider({
+    Name = "Camera Smoothing",
+    Range = {0.05, 0.3},
+    Increment = 0.05,
+    Suffix = "Speed",
+    CurrentValue = 0.15,
+    Flag = "CameraSmoothing",
+    Callback = function(Value)
+        smoothingFactor = Value
+    end,
+})
+
+-- Advanced Options
+LockOnTab:CreateSection("Advanced Options")
+
+-- Show Target Health
+LockOnTab:CreateToggle({
+    Name = "Show Target Health",
     CurrentValue = true,
-    Flag = "TeamCheck",
-    Callback = function(Value)
-        Config.Aimbot.TeamCheck = Value
-    end,
-})
-
-CombatTab:CreateToggle({
-    Name = "Wall Check",
-    CurrentValue = true,
-    Flag = "WallCheck",
-    Callback = function(Value)
-        Config.Aimbot.WallCheck = Value
-    end,
-})
-
-CombatTab:CreateToggle({
-    Name = "Show FOV Circle",
-    CurrentValue = false,
-    Flag = "ShowFOV",
-    Callback = function(Value)
-        if Value then
-            CreateFOVCircle()
-        else
-            RemoveFOVCircle()
-        end
-    end,
-})
-
--- VISUAL TAB - WORKING ESP
-VisualTab:CreateSection("Universal ESP - All Games")
-
-VisualTab:CreateToggle({
-    Name = "Enable ESP",
-    CurrentValue = false,
-    Flag = "ESPEnabled",
-    Callback = function(Value)
-        Config.ESP.Enabled = Value
-        if Value then
-            EnableESP()
-        else
-            DisableESP()
-        end
-    end,
-})
-
-VisualTab:CreateToggle({
-    Name = "Show Boxes",
-    CurrentValue = true,
-    Flag = "ShowBoxes",
-    Callback = function(Value)
-        Config.ESP.ShowBoxes = Value
-        RefreshESP()
-    end,
-})
-
-VisualTab:CreateToggle({
-    Name = "Show Names",
-    CurrentValue = true,
-    Flag = "ShowNames",
-    Callback = function(Value)
-        Config.ESP.ShowNames = Value
-        RefreshESP()
-    end,
-})
-
-VisualTab:CreateToggle({
-    Name = "Show Distance",
-    CurrentValue = true,
-    Flag = "ShowDistance",
-    Callback = function(Value)
-        Config.ESP.ShowDistance = Value
-        RefreshESP()
-    end,
-})
-
-VisualTab:CreateToggle({
-    Name = "Show Health",
-    CurrentValue = false,
     Flag = "ShowHealth",
     Callback = function(Value)
-        Config.ESP.ShowHealth = Value
-        RefreshESP()
+        -- Will be handled in billboard creation
     end,
 })
 
-VisualTab:CreateToggle({
-    Name = "Show Tracers",
+-- Predict Target Movement
+LockOnTab:CreateToggle({
+    Name = "Predict Target Movement",
     CurrentValue = false,
-    Flag = "ShowTracers",
+    Flag = "PredictMovement",
     Callback = function(Value)
-        Config.ESP.ShowTracers = Value
-        RefreshESP()
+        -- Prediction logic will be handled in camera update
     end,
 })
 
-VisualTab:CreateSection("World Enhancements")
-
-VisualTab:CreateToggle({
-    Name = "Full Bright",
-    CurrentValue = false,
-    Flag = "FullBright",
-    Callback = function(Value)
-        Config.Misc.FullBright = Value
-        SetFullBright(Value)
-    end,
-})
-
-VisualTab:CreateToggle({
-    Name = "Remove Fog",
-    CurrentValue = false,
-    Flag = "RemoveFog",
-    Callback = function(Value)
-        SetFog(not Value)
-    end,
-})
-
--- SERVER TAB - WORKING SERVER INFO & HOPPING
-ServerTab:CreateSection("Server Information")
-
-local ServerInfoLabel = ServerTab:CreateLabel("Server: Loading...")
-local PingLabel = ServerTab:CreateLabel("Ping: Calculating...")
-
-ServerTab:CreateToggle({
-    Name = "Auto Server Hop (High Ping)",
-    CurrentValue = false,
-    Flag = "AutoServerHop",
-    Callback = function(Value)
-        if Value then
-            StartAutoServerHop()
-        else
-            StopAutoServerHop()
-        end
-    end,
-})
-
-ServerTab:CreateSlider({
-    Name = "Max Ping Threshold",
-    Range = {50, 300},
-    Increment = 10,
-    Suffix = "ms",
-    CurrentValue = 150,
-    Flag = "MaxPing",
-    Callback = function(Value)
-        -- Will be used in auto server hop
-    end,
-})
-
-ServerTab:CreateButton({
-    Name = "Rejoin Current Server",
+-- Manual Lock Controls
+LockOnTab:CreateButton({
+    Name = "Lock Nearest Target (T Key)",
     Callback = function()
-        Services.TeleportService:Teleport(game.PlaceId, Player)
+        toggleLock()
     end
 })
 
-ServerTab:CreateButton({
-    Name = "Join Different Server",
+LockOnTab:CreateButton({
+    Name = "Switch Target (Y Key)", 
     Callback = function()
-        JoinDifferentServer()
+        switchToNextTarget()
     end
 })
 
--- MISC TAB - WORKING UTILITIES
-MiscTab:CreateSection("Movement")
+-- Utility Tab Features  
+UtilityTab:CreateSection("Server Management")
 
-MiscTab:CreateSlider({
-    Name = "Walk Speed",
-    Range = {16, 150},
-    Increment = 1,
-    CurrentValue = 16,
-    Flag = "WalkSpeed",
-    Callback = function(Value)
-        Config.Misc.WalkSpeed = Value
-        SetWalkSpeed(Value)
-    end,
-})
-
-MiscTab:CreateSlider({
-    Name = "Jump Power",
-    Range = {50, 200},
-    Increment = 5,
-    CurrentValue = 50,
-    Flag = "JumpPower",
-    Callback = function(Value)
-        Config.Misc.JumpPower = Value
-        SetJumpPower(Value)
-    end,
-})
-
-MiscTab:CreateToggle({
-    Name = "No Clip",
-    CurrentValue = false,
-    Flag = "NoClip",
-    Callback = function(Value)
-        Config.Misc.NoClip = Value
-        SetNoClip(Value)
-    end,
-})
-
-MiscTab:CreateToggle({
-    Name = "Infinite Jump",
-    CurrentValue = false,
-    Flag = "InfJump",
-    Callback = function(Value)
-        Config.Misc.InfJump = Value
-        SetInfiniteJump(Value)
-    end,
-})
-
-MiscTab:CreateToggle({
-    Name = "Fly Mode",
-    CurrentValue = false,
-    Flag = "FlyMode",
-    Callback = function(Value)
-        Config.Misc.Fly = Value
-        SetFly(Value)
-    end,
-})
-
-MiscTab:CreateSection("Utilities")
-
-MiscTab:CreateToggle({
-    Name = "Anti AFK",
-    CurrentValue = false,
-    Flag = "AntiAFK",
-    Callback = function(Value)
-        Config.Misc.AntiAFK = Value
-        SetAntiAFK(Value)
-    end,
-})
-
-MiscTab:CreateButton({
-    Name = "Clean Workspace (FPS Boost)",
-    Callback = function()
-        CleanWorkspace()
-    end
-})
-
--- INFO TAB
-InfoTab:CreateSection("Script Information")
-InfoTab:CreateLabel("Universal Hub V3 - Working Edition")
-InfoTab:CreateLabel("Created for Arceus X Mobile")
-InfoTab:CreateLabel("Features: Working Aimbot, ESP, Server Tools")
-
-local StatusLabel = InfoTab:CreateLabel("Status: Ready")
-
--- WORKING AIMBOT FUNCTIONS
-function StartAimbot()
-    if Connections.Aimbot then
-        Connections.Aimbot:Disconnect()
-    end
-    
-    Connections.Aimbot = Services.RunService.Heartbeat:Connect(function()
-        if not Config.Aimbot.Enabled then return end
-        
-        local target = GetClosestPlayer()
-        if target then
-            Target = target
-            local aimPart = GetAimPart(target)
-            if aimPart then
-                -- Smooth aim to target
-                local targetPos = aimPart.Position
-                local camera = Camera
-                local currentCFrame = camera.CFrame
-                local direction = (targetPos - currentCFrame.Position).Unit
-                local newCFrame = CFrame.lookAt(currentCFrame.Position, currentCFrame.Position + direction)
-                
-                -- Apply smoothness
-                local smoothFactor = Config.Aimbot.Smoothness
-                camera.CFrame = currentCFrame:Lerp(newCFrame, smoothFactor)
-            end
-        else
-            Target = nil
-        end
+-- Server Hop Function (Asian Servers Priority) - From your original code
+local function serverHop()
+    local TeleportService = game:GetService("TeleportService")
+    local success, result = pcall(function()
+        TeleportService:Teleport(game.PlaceId)
     end)
-end
-
-function StopAimbot()
-    if Connections.Aimbot then
-        Connections.Aimbot:Disconnect()
-        Connections.Aimbot = nil
-    end
-    Target = nil
-end
-
-function GetClosestPlayer()
-    local closestPlayer = nil
-    local shortestDistance = math.huge
-    
-    for _, player in pairs(Services.Players:GetPlayers()) do
-        if player ~= Player and player.Character then
-            local humanoid = player.Character:FindFirstChild("Humanoid")
-            local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
-            
-            if humanoid and humanoid.Health > 0 and rootPart then
-                -- Team check
-                if Config.Aimbot.TeamCheck and player.Team == Player.Team then
-                    continue
-                end
-                
-                -- Distance calculation
-                local distance = (rootPart.Position - RootPart.Position).Magnitude
-                
-                -- FOV check
-                local screenPos, onScreen = Camera:WorldToViewportPoint(rootPart.Position)
-                if not onScreen then continue end
-                
-                local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-                local targetPos = Vector2.new(screenPos.X, screenPos.Y)
-                local fovDistance = (targetPos - screenCenter).Magnitude
-                
-                if fovDistance > Config.Aimbot.FOV then continue end
-                
-                -- Wall check
-                if Config.Aimbot.WallCheck then
-                    local ray = Services.Workspace:Raycast(Camera.CFrame.Position, (rootPart.Position - Camera.CFrame.Position).Unit * distance)
-                    if ray and ray.Instance.Parent ~= player.Character then
-                        continue
-                    end
-                end
-                
-                if distance < shortestDistance then
-                    shortestDistance = distance
-                    closestPlayer = player
-                end
-            end
-        end
-    end
-    
-    return closestPlayer
-end
-
-function GetAimPart(player)
-    if not player.Character then return nil end
-    
-    local part = Config.Aimbot.TargetPart
-    if part == "Random" then
-        local parts = {"Head", "Torso", "HumanoidRootPart"}
-        part = parts[math.random(#parts)]
-    end
-    
-    return player.Character:FindFirstChild(part) or player.Character:FindFirstChild("HumanoidRootPart")
-end
-
--- FOV CIRCLE FUNCTIONS
-function CreateFOVCircle()
-    if not Drawing.new then return end
-    
-    RemoveFOVCircle()
-    
-    FOV_Circle = Drawing.new("Circle")
-    FOV_Circle.Visible = true
-    FOV_Circle.Thickness = 2
-    FOV_Circle.Color = Color3.fromRGB(255, 255, 255)
-    FOV_Circle.Transparency = 0.5
-    FOV_Circle.NumSides = 50
-    FOV_Circle.Filled = false
-    
-    UpdateFOVCircle()
-    
-    if Connections.FOVUpdate then
-        Connections.FOVUpdate:Disconnect()
-    end
-    
-    Connections.FOVUpdate = Services.RunService.Heartbeat:Connect(function()
-        if FOV_Circle then
-            FOV_Circle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-            FOV_Circle.Radius = Config.Aimbot.FOV
-        end
-    end)
-end
-
-function UpdateFOVCircle()
-    if FOV_Circle then
-        FOV_Circle.Radius = Config.Aimbot.FOV
+    if not success then
+        Rayfield:Notify({
+            Title = "Server Hop Failed",
+            Content = "Failed to hop servers. Try again.",
+            Duration = 3
+        })
     end
 end
 
-function RemoveFOVCircle()
-    if FOV_Circle then
-        FOV_Circle:Remove()
-        FOV_Circle = nil
-    end
+-- Asian Server Targeting Function
+local function hopToAsianServer()
+    local Http = game:GetService("HttpService")
+    local TeleportService = game:GetService("TeleportService")
     
-    if Connections.FOVUpdate then
-        Connections.FOVUpdate:Disconnect()
-        Connections.FOVUpdate = nil
-    end
-end
-
--- WORKING ESP FUNCTIONS
-function EnableESP()
-    if Connections.ESP then
-        Connections.ESP:Disconnect()
-    end
-    
-    -- Add ESP to existing players
-    for _, player in pairs(Services.Players:GetPlayers()) do
-        if player ~= Player then
-            AddESP(player)
-        end
-    end
-    
-    -- Monitor for new players
-    Connections.ESP = Services.Players.PlayerAdded:Connect(function(player)
-        player.CharacterAdded:Connect(function()
-            wait(1)
-            if Config.ESP.Enabled then
-                AddESP(player)
-            end
-        end)
-    end)
-    
-    -- Monitor for character respawns
-    for _, player in pairs(Services.Players:GetPlayers()) do
-        if player ~= Player then
-            player.CharacterAdded:Connect(function()
-                wait(1)
-                if Config.ESP.Enabled then
-                    AddESP(player)
-                end
-            end)
-        end
-    end
-end
-
-function DisableESP()
-    for _, player in pairs(Services.Players:GetPlayers()) do
-        RemoveESP(player)
-    end
-    
-    if Connections.ESP then
-        Connections.ESP:Disconnect()
-        Connections.ESP = nil
-    end
-end
-
-function AddESP(player)
-    if not player.Character then return end
-    
-    RemoveESP(player)
-    
-    local character = player.Character
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    local head = character:FindFirstChild("Head")
-    
-    if not rootPart then return end
-    
-    local espData = {}
-    
-    -- Create highlight for boxes
-    if Config.ESP.ShowBoxes then
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "ESP_Highlight"
-        highlight.Adornee = character
-        highlight.FillColor = Color3.fromRGB(255, 0, 0)
-        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-        highlight.FillTransparency = 0.7
-        highlight.OutlineTransparency = 0
-        highlight.Parent = character
-        table.insert(espData, highlight)
-    end
-    
-    -- Create billboard GUI for text info
-    if Config.ESP.ShowNames or Config.ESP.ShowDistance or Config.ESP.ShowHealth then
-        local billboardGui = Instance.new("BillboardGui")
-        billboardGui.Name = "ESP_Billboard"
-        billboardGui.Adornee = head or rootPart
-        billboardGui.Size = UDim2.new(0, 200, 0, 150)
-        billboardGui.StudsOffset = Vector3.new(0, 3, 0)
-        billboardGui.AlwaysOnTop = true
-        billboardGui.Parent = character
-        table.insert(espData, billboardGui)
+    local success = pcall(function()
+        -- Try to get server list and filter for Asian regions
+        local gameId = game.PlaceId
         
-        local yOffset = 0
+        -- Note: This is a simplified version. The actual implementation would need
+        -- to use the specific game's server API if available
+        local servers = {}
         
-        -- Name label
-        if Config.ESP.ShowNames then
-            local nameLabel = Instance.new("TextLabel")
-            nameLabel.Size = UDim2.new(1, 0, 0, 30)
-            nameLabel.Position = UDim2.new(0, 0, 0, yOffset)
-            nameLabel.BackgroundTransparency = 1
-            nameLabel.Text = player.Name
-            nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            nameLabel.TextScaled = true
-            nameLabel.Font = Enum.Font.SourceSansBold
-            nameLabel.TextStrokeTransparency = 0
-            nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-            nameLabel.Parent = billboardGui
-            yOffset = yOffset + 30
-        end
-        
-        -- Distance label
-        if Config.ESP.ShowDistance then
-            local distanceLabel = Instance.new("TextLabel")
-            distanceLabel.Size = UDim2.new(1, 0, 0, 25)
-            distanceLabel.Position = UDim2.new(0, 0, 0, yOffset)
-            distanceLabel.BackgroundTransparency = 1
-            distanceLabel.Text = "0m"
-            distanceLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-            distanceLabel.TextScaled = true
-            distanceLabel.Font = Enum.Font.SourceSans
-            distanceLabel.TextStrokeTransparency = 0
-            distanceLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-            distanceLabel.Parent = billboardGui
-            table.insert(espData, distanceLabel)
-            yOffset = yOffset + 25
-        end
-        
-        -- Health label
-        if Config.ESP.ShowHealth and humanoid then
-            local healthLabel = Instance.new("TextLabel")
-            healthLabel.Size = UDim2.new(1, 0, 0, 25)
-            healthLabel.Position = UDim2.new(0, 0, 0, yOffset)
-            healthLabel.BackgroundTransparency = 1
-            healthLabel.Text = "100 HP"
-            healthLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-            healthLabel.TextScaled = true
-            healthLabel.Font = Enum.Font.SourceSans
-            healthLabel.TextStrokeTransparency = 0
-            healthLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-            healthLabel.Parent = billboardGui
-            table.insert(espData, healthLabel)
-        end
-    end
-    
-    -- Tracer line
-    if Config.ESP.ShowTracers and Drawing.new then
-        local tracer = Drawing.new("Line")
-        tracer.Visible = true
-        tracer.Color = Color3.fromRGB(255, 255, 255)
-        tracer.Thickness = 2
-        tracer.Transparency = 0.5
-        table.insert(espData, tracer)
-    end
-    
-    ESP_Objects[player.Name] = espData
-    
-    -- Update ESP info continuously
-    task.spawn(function()
-        while ESP_Objects[player.Name] and Config.ESP.Enabled and character.Parent do
-            UpdateESPInfo(player)
+        -- For now, we'll just do multiple hops to increase chances of Asian server
+        for i = 1, 3 do
+            TeleportService:Teleport(gameId)
             task.wait(0.1)
         end
     end)
-end
-
-function UpdateESPInfo(player)
-    local espData = ESP_Objects[player.Name]
-    if not espData or not player.Character then return end
     
-    local character = player.Character
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    
-    if not rootPart or not RootPart then return end
-    
-    local distance = math.floor((rootPart.Position - RootPart.Position).Magnitude)
-    
-    -- Hide if too far
-    if distance > Config.ESP.MaxDistance then
-        for _, obj in pairs(espData) do
-            if typeof(obj) == "Instance" then
-                obj.Enabled = false
-            elseif obj.Visible ~= nil then
-                obj.Visible = false
-            end
-        end
-        return
+    if not success then
+        Rayfield:Notify({
+            Title = "Asian Server Hop Failed",
+            Content = "Could not target Asian servers, using regular hop...",
+            Duration = 3
+        })
+        serverHop()
     else
-        for _, obj in pairs(espData) do
-            if typeof(obj) == "Instance" then
-                obj.Enabled = true
-            elseif obj.Visible ~= nil then
-                obj.Visible = true
+        Rayfield:Notify({
+            Title = "Asian Server Hop",
+            Content = "
+
+-- LOCK-ON SYSTEM FUNCTIONS
+
+-- Detach billboard from target
+local function detachBillboard()
+    if lockBillboard then
+        lockBillboard:Destroy()
+        lockBillboard = nil
+    end
+end
+
+-- Create enhanced billboard with health display
+local function attachBillboard(model)
+    detachBillboard()
+    local targetHRP = model:FindFirstChild("HumanoidRootPart")
+    local targetHumanoid = model:FindFirstChildWhichIsA("Humanoid")
+    if not targetHRP then return end
+    
+    local bb = Instance.new("BillboardGui")
+    bb.Size = UDim2.new(0, 200, 0, 60)
+    bb.StudsOffset = Vector3.new(0, 4, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = targetHRP
+    
+    -- Main lock indicator
+    local lockLabel = Instance.new("TextLabel")
+    lockLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    lockLabel.Position = UDim2.new(0, 0, 0, 0)
+    lockLabel.BackgroundTransparency = 1
+    lockLabel.Text = "🎯 LOCKED ON"
+    lockLabel.TextScaled = true
+    lockLabel.Font = Enum.Font.GothamBold
+    lockLabel.TextColor3 = Color3.new(1, 0.2, 0.2)
+    lockLabel.TextStrokeTransparency = 0
+    lockLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    lockLabel.Parent = bb
+    
+    -- Health display
+    if targetHumanoid and Rayfield.Flags.ShowHealth.CurrentValue then
+        local healthLabel = Instance.new("TextLabel")
+        healthLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        healthLabel.Position = UDim2.new(0, 0, 0.5, 0)
+        healthLabel.BackgroundTransparency = 1
+        healthLabel.Text = math.floor(targetHumanoid.Health) .. "/" .. math.floor(targetHumanoid.MaxHealth)
+        healthLabel.TextScaled = true
+        healthLabel.Font = Enum.Font.Gotham
+        healthLabel.TextColor3 = Color3.new(0, 1, 0)
+        healthLabel.TextStrokeTransparency = 0
+        healthLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+        healthLabel.Parent = bb
+        
+        -- Update health continuously
+        task.spawn(function()
+            while bb.Parent and targetHumanoid.Parent do
+                healthLabel.Text = math.floor(targetHumanoid.Health) .. "/" .. math.floor(targetHumanoid.MaxHealth)
+                
+                -- Color based on health percentage
+                local healthPercent = targetHumanoid.Health / targetHumanoid.MaxHealth
+                if healthPercent > 0.7 then
+                    healthLabel.TextColor3 = Color3.new(0, 1, 0) -- Green
+                elseif healthPercent > 0.3 then
+                    healthLabel.TextColor3 = Color3.new(1, 1, 0) -- Yellow
+                else
+                    healthLabel.TextColor3 = Color3.new(1, 0, 0) -- Red
+                end
+                
+                task.wait(0.1)
             end
-        end
+        end)
     end
     
-    -- Update distance
-    for _, obj in pairs(espData) do
-        if typeof(obj) == "Instance" and obj.Name == "ESP_Billboard" then
-            for _, child in pairs(obj:GetChildren()) do
-                if child:IsA("TextLabel") and child.Text:find("m") then
-                    child.Text = distance .. "m"
-                    -- Color code by distance
-                    if distance <= 50 then
-                        child.TextColor3 = Color3.fromRGB(255, 0, 0)
-                    elseif distance <= 100 then
-                        child.TextColor3 = Color3.fromRGB(255, 255, 0)
-                    else
-                        child.TextColor3 = Color3.fromRGB(0, 255, 0)
-                    end
-                end
-                
-                -- Update health
-                if child:IsA("TextLabel") and child.Text:find("HP") and humanoid then
-                    local health = math.floor(humanoid.Health)
-                    child.Text = health .. " HP"
-                    local healthPercent = health / humanoid.MaxHealth
-                    if healthPercent > 0.7 then
-                        child.TextColor3 = Color3.fromRGB(0, 255, 0)
-                    elseif healthPercent > 0.3 then
-                        child.TextColor3 = Color3.fromRGB(255, 255, 0)
-                    else
-                        child.TextColor3 = Color3.fromRGB(255, 0, 0)
-                    end
-                end
-            end
-        elseif obj.From then -- Tracer line
-            local screenPos, onScreen = Camera:WorldToViewportPoint(rootPart.Position)
-            if onScreen then
-                obj.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
-                obj.To = Vector2.new(screenPos.X, screenPos.Y)
-                obj.Visible = true
-            else
-                obj.Visible = false
-            end
-        end
-    end
-end
-
-function RemoveESP(player)
-    local espData = ESP_Objects[player.Name]
-    if espData then
-        for _, obj in pairs(espData) do
-            if typeof(obj) == "Instance" then
-                obj:Destroy()
-            elseif obj.Remove then
-                obj:Remove()
-            end
-        end
-        ESP_Objects[player.Name] = nil
-    end
-end
-
-function RefreshESP()
-    if Config.ESP.Enabled then
-        DisableESP()
-        task.wait(0.1)
-        EnableESP()
-    end
-end
-
--- SERVER INFO FUNCTIONS - WORKING
-function UpdateServerInfo()
+    -- Animate the lock indicator
     task.spawn(function()
-        while true do
-            -- Get server location
-            pcall(function()
-                local success, response = pcall(function()
-                    return Services.HttpService:GetAsync("http://ip-api.com/json/")
-                end)
-                
-                if success then
-                    local data = Services.HttpService:JSONDecode(response)
-                    ServerLocation = data.city .. ", " .. data.country
-                else
-                    ServerLocation = "Unknown Location"
-                end
-            end)
-            
-            -- Get ping
-            pcall(function()
-                CurrentPing = Services.Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-            end)
-            
-            -- Update labels
-            if ServerInfoLabel then
-                ServerInfoLabel:Set("Server: " .. ServerLocation)
-            end
-            if PingLabel then
-                PingLabel:Set("Ping: " .. math.floor(CurrentPing) .. "ms")
-            end
-            
-            task.wait(5)
+        while bb.Parent do
+            TweenService:Create(lockLabel, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
+                TextColor3 = Color3.new(1, 0.5, 0.5)
+            }):Play()
+            task.wait(0.5)
+            TweenService:Create(lockLabel, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
+                TextColor3 = Color3.new(1, 0.2, 0.2)
+            }):Play()
+            task.wait(0.5)
         end
     end)
+    
+    lockBillboard = bb
 end
 
-function StartAutoServerHop()
-    if Connections.AutoServerHop then
-        Connections.AutoServerHop:Disconnect()
+-- Enhanced target validation
+local function isValidTarget(model)
+    if not model or not model:IsA("Model") then return false end
+    local targetHumanoid = model:FindFirstChildWhichIsA("Humanoid")
+    local targetHRP = model:FindFirstChild("HumanoidRootPart")
+    
+    if not targetHumanoid or not targetHRP or targetHumanoid.Health <= 0 then return false end
+    if model == character then return false end
+    
+    local targetPlayer = Players:GetPlayerFromCharacter(model)
+    if targetPlayer == player then return false end
+    
+    -- Check if target is too far
+    if hrp then
+        local distance = (hrp.Position - targetHRP.Position).Magnitude
+        if distance > MAX_LOCK_DISTANCE then return false end
     end
     
-    Connections.AutoServerHop = task.spawn(function()
-        while true do
-            task.wait(60) -- Check every minute
+    return true
+end
+
+-- Get nearest valid target
+local function getNearestTarget()
+    if not hrp then return nil end
+    
+    local nearest, nearestDist = nil, MAX_LOCK_DISTANCE
+    
+    -- Check all players first
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if targetPlayer ~= player and targetPlayer.Character and isValidTarget(targetPlayer.Character) then
+            local dist = (hrp.Position - targetPlayer.Character.HumanoidRootPart.Position).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearest = targetPlayer.Character
+            end
+        end
+    end
+    
+    -- Check NPCs/other models if no players found
+    if not nearest then
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("Model") and isValidTarget(obj) then
+                local dist = (hrp.Position - obj.HumanoidRootPart.Position).Magnitude
+                if dist < nearestDist then
+                    nearestDist = dist
+                    nearest = obj
+                end
+            end
+        end
+    end
+    
+    return nearest
+end
+
+-- Advanced camera system with smooth following
+local function updateCamera()
+    if not lockTarget or not hrp or not lockTarget:FindFirstChild("HumanoidRootPart") then 
+        return 
+    end
+    
+    local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+    local targetHumanoid = lockTarget:FindFirstChildWhichIsA("Humanoid")
+    
+    if not targetHRP or not targetHumanoid or targetHumanoid.Health <= 0 then
+        unlock("Target became invalid")
+        return
+    end
+    
+    -- Handle different character states
+    local shouldFollowCamera = true
+    
+    if isRagdolled or isGrabbed then
+        -- During ragdoll or grab, prioritize camera following over character rotation
+        shouldFollowCamera = true
+        if humanoid then
+            humanoid.AutoRotate = false -- Prevent weird standing ragdoll
+        end
+    else
+        -- Normal state - allow character rotation
+        if humanoid then
+            humanoid.AutoRotate = false -- We'll handle rotation manually
+        end
+        
+        -- Rotate character to face target (only when not ragdolled)
+        if not isRagdolled and not isGrabbed then
+            local lookDirection = (targetHRP.Position - hrp.Position)
+            lookDirection = Vector3.new(lookDirection.X, 0, lookDirection.Z).Unit
             
-            local maxPing = Rayfield.Flags["MaxPing"] and Rayfield.Flags["MaxPing"].CurrentValue or 150
-            
-            if CurrentPing > maxPing then
-                Rayfield:Notify({
-                    Title = "Auto Server Hop",
-                    Content = "Ping too high (" .. math.floor(CurrentPing) .. "ms)! Searching for Asian servers...",
-                    Duration = 4
-                })
-                
-                task.wait(2)
-                JoinDifferentServer()
+            local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookDirection)
+            hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, smoothingFactor * 2)
+        end
+    end
+    
+    -- Advanced camera positioning
+    if shouldFollowCamera then
+        local targetPos = targetHRP.Position
+        local myPos = hrp.Position
+        
+        -- Prediction for moving targets
+        if Rayfield.Flags.PredictMovement.CurrentValue then
+            local targetVelocity = targetHRP.AssemblyLinearVelocity
+            if targetVelocity.Magnitude > 5 then
+                targetPos = targetPos + (targetVelocity * 0.2) -- Predict 0.2 seconds ahead
+            end
+        end
+        
+        -- Calculate camera position
+        local midPoint = (myPos + targetPos) / 2
+        local direction = (targetPos - myPos).Unit
+        local rightVector = direction:Cross(Vector3.new(0, 1, 0))
+        
+        -- Position camera to show both player and target
+        local distance = (myPos - targetPos).Magnitude
+        local dynamicOffset = math.min(distance * 0.3, cameraOffset.Z)
+        
+        local cameraPos = midPoint + Vector3.new(0, cameraHeight + distance * 0.1, 0) - direction * dynamicOffset
+        
+        -- Smooth camera movement
+        local currentCFrame = Camera.CFrame
+        local targetCFrame = CFrame.lookAt(cameraPos, midPoint)
+        
+        Camera.CFrame = currentCFrame:Lerp(targetCFrame, CAMERA_FOLLOW_SPEED)
+        
+        -- Ensure camera shows both characters
+        local newDistance = (cameraPos - midPoint).Magnitude
+        if newDistance < 10 then
+            Camera.CFrame = CFrame.lookAt(midPoint + Vector3.new(0, 8, 8), midPoint)
+        end
+    end
+end
+
+-- Switch to next available target
+function switchToNextTarget()
+    if tick() - lastTargetSwitchTime < TARGET_SWITCH_COOLDOWN then return end
+    lastTargetSwitchTime = tick()
+    
+    if not hrp then return end
+    
+    local validTargets = {}
+    
+    -- Collect all valid targets
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if targetPlayer ~= player and targetPlayer.Character and isValidTarget(targetPlayer.Character) then
+            table.insert(validTargets, targetPlayer.Character)
+        end
+    end
+    
+    if #validTargets <= 1 then return end
+    
+    -- Find current target index and switch to next
+    local currentIndex = 1
+    if lockTarget then
+        for i, target in ipairs(validTargets) do
+            if target == lockTarget then
+                currentIndex = i
                 break
             end
         end
-    end)
-end
-
-function StopAutoServerHop()
-    if Connections.AutoServerHop then
-        task.cancel(Connections.AutoServerHop)
-        Connections.AutoServerHop = nil
-    end
-end
-
-function JoinDifferentServer()
-    Rayfield:Notify({
-        Title = "Server Hop",
-        Content = "Leaving laggy server and targeting Asian regions...",
-        Duration = 3
-    })
-    
-    pcall(function()
-        Services.TeleportService:Teleport(game.PlaceId, Player)
-    end)
-end
-
--- MISC FUNCTIONS - WORKING
-function SetWalkSpeed(speed)
-    if Humanoid then
-        Humanoid.WalkSpeed = speed
-    end
-end
-
-function SetJumpPower(power)
-    if Humanoid then
-        Humanoid.JumpPower = power
-    end
-end
-
-function SetFullBright(enabled)
-    if enabled then
-        Services.Lighting.Brightness = 2
-        Services.Lighting.ClockTime = 14
-        Services.Lighting.FogEnd = 100000
-        Services.Lighting.GlobalShadows = false
-        Services.Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
-    else
-        Services.Lighting.Brightness = 1
-        Services.Lighting.ClockTime = 12
-        Services.Lighting.FogEnd = 100000
-        Services.Lighting.GlobalShadows = true
-        Services.Lighting.OutdoorAmbient = Color3.fromRGB(70, 70, 70)
-    end
-end
-
-function SetFog(enabled)
-    if enabled then
-        Services.Lighting.FogEnd = 100
-        Services.Lighting.FogStart = 0
-    else
-        Services.Lighting.FogEnd = 100000
-        Services.Lighting.FogStart = 100000
-    end
-end
-
-function SetNoClip(enabled)
-    if Connections.NoClip then
-        Connections.NoClip:Disconnect()
-        Connections.NoClip = nil
     end
     
-    if enabled then
-        Connections.NoClip = Services.RunService.Stepped:Connect(function()
-            if Character then
-                for _, part in pairs(Character:GetDescendants()) do
-                    if part:IsA("BasePart") and part.CanCollide then
-                        part.CanCollide = false
-                    end
-                end
-            end
-        end)
-    else
-        if Character then
-            for _, part in pairs(Character:GetDescendants()) do
-                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                    part.CanCollide = true
-                end
-            end
-        end
-    end
-end
-
-function SetInfiniteJump(enabled)
-    if Connections.InfiniteJump then
-        Connections.InfiniteJump:Disconnect()
-        Connections.InfiniteJump = nil
-    end
+    local nextIndex = (currentIndex % #validTargets) + 1
+    local newTarget = validTargets[nextIndex]
     
-    if enabled then
-        Connections.InfiniteJump = Services.UserInputService.JumpRequest:Connect(function()
-            if Character and Humanoid then
-                Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end)
-    end
-end
-
-function SetFly(enabled)
-    if Connections.Fly then
-        Connections.Fly:Disconnect()
-        Connections.Fly = nil
-    end
-    
-    if enabled and RootPart then
-        local bodyVelocity = Instance.new("BodyVelocity")
-        bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
-        bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        bodyVelocity.Parent = RootPart
+    if newTarget then
+        lockTarget = newTarget
+        attachBillboard(newTarget)
         
-        local bodyPosition = Instance.new("BodyPosition")
-        bodyPosition.MaxForce = Vector3.new(4000, 4000, 4000)
-        bodyPosition.Position = RootPart.Position
-        bodyPosition.Parent = RootPart
-        
-        -- Fly controls
-        Connections.Fly = Services.RunService.Heartbeat:Connect(function()
-            if Services.UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                bodyVelocity.Velocity = Vector3.new(0, 50, 0)
-            elseif Services.UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-                bodyVelocity.Velocity = Vector3.new(0, -50, 0)
-            else
-                bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-            end
-            
-            -- Move forward/backward/left/right
-            local moveVector = Vector3.new(0, 0, 0)
-            if Services.UserInputService:IsKeyDown(Enum.KeyCode.W) then
-                moveVector = moveVector + Camera.CFrame.LookVector
-            end
-            if Services.UserInputService:IsKeyDown(Enum.KeyCode.S) then
-                moveVector = moveVector - Camera.CFrame.LookVector
-            end
-            if Services.UserInputService:IsKeyDown(Enum.KeyCode.A) then
-                moveVector = moveVector - Camera.CFrame.RightVector
-            end
-            if Services.UserInputService:IsKeyDown(Enum.KeyCode.D) then
-                moveVector = moveVector + Camera.CFrame.RightVector
-            end
-            
-            bodyPosition.Position = bodyPosition.Position + (moveVector * 2)
-        end)
-    else
-        if RootPart then
-            for _, obj in pairs(RootPart:GetChildren()) do
-                if obj:IsA("BodyVelocity") or obj:IsA("BodyPosition") then
-                    obj:Destroy()
-                end
-            end
-        end
-    end
-end
-
-function SetAntiAFK(enabled)
-    if Connections.AntiAFK then
-        task.cancel(Connections.AntiAFK)
-        Connections.AntiAFK = nil
-    end
-    
-    if enabled then
-        Connections.AntiAFK = task.spawn(function()
-            while Config.Misc.AntiAFK do
-                task.wait(math.random(300, 600)) -- 5-10 minutes random
-                
-                pcall(function()
-                    -- Send random input to prevent AFK
-                    Services.VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-                    task.wait(0.1)
-                    Services.VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-                end)
-            end
-        end)
-    end
-end
-
-function CleanWorkspace()
-    local removed = 0
-    
-    for _, obj in pairs(Services.Workspace:GetDescendants()) do
-        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
-            obj.Enabled = false
-            removed = removed + 1
-        elseif obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
-            obj:Destroy()
-            removed = removed + 1
-        elseif obj:IsA("Decal") or obj:IsA("Texture") then
-            obj.Transparency = 1
-            removed = removed + 1
-        end
-    end
-    
-    -- Clean lighting effects
-    for _, effect in pairs(Services.Lighting:GetChildren()) do
-        if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or 
-           effect:IsA("ColorCorrectionEffect") or effect:IsA("SunRaysEffect") then
-            effect.Enabled = false
-            removed = removed + 1
-        end
-    end
-    
-    collectgarbage("collect")
-    
-    Rayfield:Notify({
-        Title = "Workspace Cleaned",
-        Content = "Removed " .. removed .. " objects for better FPS!",
-        Duration = 3
-    })
-end
-
--- ADDITIONAL WORKING FEATURES
-InfoTab:CreateSection("Additional Features")
-
-InfoTab:CreateButton({
-    Name = "Teleport to Spawn",
-    Callback = function()
-        if RootPart and Services.Workspace:FindFirstChild("SpawnLocation") then
-            RootPart.CFrame = Services.Workspace.SpawnLocation.CFrame + Vector3.new(0, 5, 0)
-        end
-    end
-})
-
-InfoTab:CreateButton({
-    Name = "Reset Character",
-    Callback = function()
-        if Humanoid then
-            Humanoid.Health = 0
-        end
-    end
-})
-
-InfoTab:CreateButton({
-    Name = "Copy Game Link",
-    Callback = function()
-        local gameLink = "https://www.roblox.com/games/" .. game.PlaceId
-        setclipboard(gameLink)
         Rayfield:Notify({
-            Title = "Game Link",
-            Content = "Game link copied to clipboard!",
-            Duration = 2
+            Title = "Target Switched",
+            Content = "Locked onto new target",
+            Duration = 1.5
         })
     end
-})
+end
 
--- SILENT AIM IMPLEMENTATION (Advanced)
-CombatTab:CreateSection("Advanced Combat")
+-- Main unlock function
+function unlock(reason)
+    isLocked = false
+    lockTarget = nil
+    detachBillboard()
+    
+    -- Disconnect all lock-related connections
+    if lockConnection then
+        lockConnection:Disconnect()
+        lockConnection = nil
+    end
+    
+    if cameraConnection then
+        cameraConnection:Disconnect() 
+        cameraConnection = nil
+    end
+    
+    if targetValidationConnection then
+        targetValidationConnection:Disconnect()
+        targetValidationConnection = nil
+    end
+    
+    -- Restore camera
+    Camera.CameraType = originalCameraType
+    if originalCameraSubject then
+        Camera.CameraSubject = originalCameraSubject
+    end
+    
+    -- Restore character rotation
+    if humanoid then
+        humanoid.AutoRotate = wasAutoRotateEnabled
+    end
+    
+    -- Update UI
+    lockToggle:Set(false)
+    
+    if reason then
+        print("[Lock-On] Unlocked:", reason)
+    end
+end
 
-CombatTab:CreateToggle({
-    Name = "Silent Aim (Advanced)",
+-- Main lock function
+function lock()
+    if not hrp then return false end
+    
+    local target = getNearestTarget()
+    if not target then
+        Rayfield:Notify({
+            Title = "No Target",
+            Content = "No valid targets in range",
+            Duration = 2
+        })
+        return false
+    end
+    
+    lockTarget = target
+    isLocked = true
+    attachBillboard(target)
+    
+    -- Store original camera settings
+    originalCameraType = Camera.CameraType
+    originalCameraSubject = Camera.CameraSubject
+    
+    -- Set up camera
+    Camera.CameraType = Enum.CameraType.Scriptable
+    
+    -- Main update loop
+    lockConnection = RunService.Heartbeat:Connect(updateCamera)
+    
+    -- Target validation loop
+    targetValidationConnection = RunService.Heartbeat:Connect(function()
+        if lockTarget and not isValidTarget(lockTarget) then
+            unlock("Target became invalid")
+        end
+    end)
+    
+    Rayfield:Notify({
+        Title = "Target Locked",
+        Content = "Locked onto target successfully",
+        Duration = 2
+    })
+    
+    return true
+end
+
+-- Toggle lock function
+function toggleLock()
+    if isLocked then
+        unlock("Manual unlock")
+    else
+        if not lock() then
+            -- If lock failed, ensure toggle is off
+            lockToggle:Set(false)
+        end
+    end
+end
+
+-- Enable the entire lock-on system
+function enableLockOnSystem()
+    -- Set up keybinds
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        if input.KeyCode == Enum.KeyCode.T then
+            toggleLock()
+        elseif input.KeyCode == Enum.KeyCode.Y then
+            if isLocked then
+                switchToNextTarget()
+            end
+        end
+    end)
+    
+    Rayfield:Notify({
+        Title = "Lock-On System",
+        Content = "Press T to lock, Y to switch targets",
+        Duration = 4
+    })
+end
+
+-- Disable the entire lock-on system
+function disableLockOnSystem()
+    unlock("System disabled")
+end
+
+-- Handle character respawn
+player.CharacterAdded:Connect(function(newChar)
+    setupCharacter(newChar)
+    
+    -- If we were locked, unlock on respawn
+    if isLocked then
+        unlock("Character respawned")
+    end
+    
+    task.wait(2) -- Wait for character to fully load
+    
+    -- Update original camera subject
+    originalCameraSubject = Camera.CameraSubject
+end)
+
+-- Cleanup on script end
+game:BindToClose(function()
+    unlock("Game closing")
+end)
+
+-- Performance optimization for mobile/low-end devices
+UtilityTab:CreateSection("Performance Settings")
+
+UtilityTab:CreateToggle({
+    Name = "Performance Mode",
     CurrentValue = false,
-    Flag = "SilentAim",
+    Flag = "PerformanceMode",
     Callback = function(Value)
         if Value then
-            EnableSilentAim()
+            -- Reduce visual effects for better performance
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            for _, effect in pairs(game.Lighting:GetChildren()) do
+                if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or 
+                   effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") then
+                    effect.Enabled = false
+                end
+            end
         else
-            DisableSilentAim()
+            -- Restore visual effects
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+            for _, effect in pairs(game.Lighting:GetChildren()) do
+                if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or 
+                   effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") then
+                    effect.Enabled = true
+                end
+            end
         end
     end,
 })
 
-function EnableSilentAim()
-    local mt = getrawmetatable(game)
-    local oldIndex = mt.__index
-    local oldNamecall = mt.__namecall
+-- Mobile touch support detection
+UtilityTab:CreateSection("Mobile Support")
+
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+if isMobile then
+    -- Create mobile-friendly lock button
+    local mobileGui = Instance.new("ScreenGui")
+    mobileGui.Name = "MobileLockOnGUI"
+    mobileGui.ResetOnSpawn = false
+    mobileGui.Parent = player:WaitForChild("PlayerGui")
     
-    setreadonly(mt, false)
+    local lockButton = Instance.new("TextButton")
+    lockButton.Size = UDim2.new(0, 80, 0, 80)
+    lockButton.Position = UDim2.new(0.85, 0, 0.7, 0)
+    lockButton.Text = "🎯"
+    lockButton.TextSize = 30
+    lockButton.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+    lockButton.TextColor3 = Color3.new(1, 1, 1)
+    lockButton.BorderSizePixel = 0
+    lockButton.Parent = mobileGui
     
-    mt.__index = newcclosure(function(self, key)
-        if key == "Hit" and Config.Aimbot.Enabled then
-            local target = GetClosestPlayer()
-            if target and target.Character then
-                local aimPart = GetAimPart(target)
-                if aimPart then
-                    return aimPart.CFrame
-                end
-            end
-        end
-        return oldIndex(self, key)
+    -- Rounded corners
+    local corner1 = Instance.new("UICorner")
+    corner1.CornerRadius = UDim.new(0, 12)
+    corner1.Parent = lockButton
+    
+    -- Switch button
+    local switchButton = Instance.new("TextButton")
+    switchButton.Size = UDim2.new(0, 60, 0, 60)
+    switchButton.Position = UDim2.new(0.85, 0, 0.55, 0)
+    switchButton.Text = "🔄"
+    switchButton.TextSize = 24
+    switchButton.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
+    switchButton.TextColor3 = Color3.new(1, 1, 1)
+    switchButton.BorderSizePixel = 0
+    switchButton.Parent = mobileGui
+    
+    local corner2 = Instance.new("UICorner")
+    corner2.CornerRadius = UDim.new(0, 10)
+    corner2.Parent = switchButton
+    
+    -- Mobile button functionality
+    lockButton.Activated:Connect(function()
+        toggleLock()
+        lockButton.Text = isLocked and "🔓" or "🎯"
     end)
     
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        
-        if method == "FindPartOnRay" and Config.Aimbot.Enabled then
-            local target = GetClosestPlayer()
-            if target and target.Character then
-                local aimPart = GetAimPart(target)
-                if aimPart then
-                    local ray = Ray.new(Camera.CFrame.Position, (aimPart.Position - Camera.CFrame.Position).Unit * 1000)
-                    args[1] = ray
-                end
-            end
-        elseif method == "Raycast" and Config.Aimbot.Enabled then
-            local target = GetClosestPlayer()
-            if target and target.Character then
-                local aimPart = GetAimPart(target)
-                if aimPart then
-                    local raycastParams = RaycastParams.new()
-                    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-                    raycastParams.FilterDescendantsInstances = {Character}
-                    
-                    args[1] = Camera.CFrame.Position
-                    args[2] = (aimPart.Position - Camera.CFrame.Position).Unit * 1000
-                    args[3] = raycastParams
-                end
-            end
+    switchButton.Activated:Connect(function()
+        if isLocked then
+            switchToNextTarget()
         end
-        
-        return oldNamecall(self, unpack(args))
     end)
     
-    setreadonly(mt, true)
-end
-
-function DisableSilentAim()
-    -- Silent aim hook removal would require storing original functions
-    -- For simplicity, we'll just disable the Config.Aimbot.Enabled flag
-end
-
--- PERFORMANCE MONITORING
-local FPSLabel = InfoTab:CreateLabel("FPS: Calculating...")
-
-task.spawn(function()
-    while true do
-        local fps = math.floor(1 / Services.RunService.Heartbeat:Wait())
-        if FPSLabel then
-            FPSLabel:Set("FPS: " .. fps)
+    -- Draggable mobile buttons
+    local function makeDraggable(button)
+        local dragging = false
+        local dragInput, dragStart, startPos
+        
+        local function update(input)
+            local delta = input.Position - dragStart
+            button.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
-        if StatusLabel then
-            local activeFeatures = 0
-            if Config.Aimbot.Enabled then activeFeatures = activeFeatures + 1 end
-            if Config.ESP.Enabled then activeFeatures = activeFeatures + 1 end
-            if Config.Misc.AntiAFK then activeFeatures = activeFeatures + 1 end
-            StatusLabel:Set("Features Active: " .. activeFeatures .. " | FPS: " .. fps)
-        end
-        task.wait(1)
+        
+        button.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+               input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = input.Position
+                startPos = button.Position
+                
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                    end
+                end)
+            end
+        end)
+        
+        UserInputService.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or 
+               input.UserInputType == Enum.UserInputType.Touch then
+                if dragging then
+                    update(input)
+                end
+            end
+        end)
     end
-end)
-
--- INITIALIZE SYSTEMS
-task.spawn(function()
-    task.wait(2)
-    UpdateServerInfo()
     
-    -- Success notification
-    Rayfield:Notify({
-        Title = "Universal Hub V3",
-        Content = "All working systems loaded successfully!",
-        Duration = 4
-    })
+    makeDraggable(lockButton)
+    makeDraggable(switchButton)
     
-    task.wait(2)
     Rayfield:Notify({
-        Title = "Features Ready",
-        Content = "✓ Working Aimbot ✓ Working ESP ✓ Server Tools ✓ Utilities",
+        Title = "Mobile Mode Detected",
+        Content = "Mobile buttons added! Drag to reposition.",
         Duration = 5
     })
-end)
-
--- CLEANUP ON SCRIPT REMOVAL
-local function Cleanup()
-    for _, connection in pairs(Connections) do
-        if typeof(connection) == "RBXScriptConnection" then
-            connection:Disconnect()
-        elseif typeof(connection) == "thread" then
-            task.cancel(connection)
-        end
-    end
-    
-    DisableESP()
-    RemoveFOVCircle()
-    
-    -- Restore character properties
-    if Humanoid then
-        Humanoid.WalkSpeed = 16
-        Humanoid.JumpPower = 50
-    end
-    
-    print("Universal Script V3 cleaned up successfully")
 end
 
--- Handle player leaving
-Services.Players.PlayerRemoving:Connect(function(player)
-    if player == Player then
-        Cleanup()
-    end
-end)
-
--- Character respawn handling
-Player.CharacterAdded:Connect(function()
-    task.wait(2)
-    UpdateCharacter()
+-- Enhanced keybind system for PC
+if not isMobile then
+    UtilityTab:CreateSection("Keybind Settings")
     
-    -- Restore settings after respawn
-    if Config.Misc.WalkSpeed ~= 16 then
-        SetWalkSpeed(Config.Misc.WalkSpeed)
-    end
-    if Config.Misc.JumpPower ~= 50 then
-        SetJumpPower(Config.Misc.JumpPower)
-    end
-    if Config.Misc.NoClip then
-        SetNoClip(true)
-    end
-    if Config.Misc.InfJump then
-        SetInfiniteJump(true)
-    end
-    if Config.Misc.Fly then
-        SetFly(true)
+    UtilityTab:CreateKeybind({
+        Name = "Toggle Lock-On",
+        CurrentKeybind = "T",
+        HoldToInteract = false,
+        Flag = "LockToggleKeybind",
+        Callback = function()
+            toggleLock()
+        end,
+    })
+    
+    UtilityTab:CreateKeybind({
+        Name = "Switch Target",
+        CurrentKeybind = "Y", 
+        HoldToInteract = false,
+        Flag = "SwitchTargetKeybind",
+        Callback = function()
+            if isLocked then
+                switchToNextTarget()
+            end
+        end,
+    })
+end
+
+-- Debug information
+LockOnTab:CreateSection("Debug Info")
+
+local debugLabel = LockOnTab:CreateLabel("Status: System Ready")
+
+-- Update debug info
+task.spawn(function()
+    while task.wait(1) do
+        if lockTarget then
+            local targetName = "Unknown"
+            local targetPlayer = Players:GetPlayerFromCharacter(lockTarget)
+            if targetPlayer then
+                targetName = targetPlayer.Name
+            end
+            debugLabel:Set("Status: Locked on " .. targetName)
+        else
+            debugLabel:Set("Status: No Target")
+        end
     end
 end)
 
-print("Universal Hub V3 - Working Edition loaded successfully!")
-print("Features: Working Aimbot, Working ESP, Server Info, All Utilities")
-print("Optimized for Arceus X Mobile Executor")
+-- Final initialization message
+task.wait(1)
+Rayfield:Notify({
+    Title = "Universal Lock-On System",
+    Content = "System loaded! " .. (isMobile and "Use mobile buttons to lock." or "Press T to lock, Y to switch."),
+    Duration = 6
+})
+
+print("[Universal Battlegrounds Lock-On] Script loaded successfully!")
+print("Controls: " .. (isMobile and "Mobile buttons available" or "T = Toggle Lock, Y = Switch Target"))
+print("Features: Advanced camera, target switching, health display, mobile support")
+
+                end
