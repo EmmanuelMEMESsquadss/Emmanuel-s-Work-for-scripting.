@@ -361,7 +361,8 @@ function disableLock(reason)
         lockIndicator = nil
     end
     
-    if originalCameraSubject then
+    -- Only restore camera subject if it was changed (for CamLock)
+    if originalCameraSubject and Camera.CameraSubject == hrp then
         Camera.CameraSubject = originalCameraSubject
     end
     
@@ -747,13 +748,15 @@ print("🚨 Hold screen corners for 2 seconds for emergency unlock")
 
 -- Show current device stats
 spawn(function()
-    wait(1)
-    local ping = getCurrentPing()
+    wait(2)
+    local info = serverManager:getServerInfo()
     print("📊 Device Stats:")
-    print("   • Ping: " .. math.floor(ping) .. "ms")
+    print("   • Server Quality: " .. info.quality)
+    print("   • Ping: " .. info.ping .. "ms")
+    print("   • Players: " .. info.players)
     print("   • Platform: Mobile")
+    print("   • UI: " .. (rayfieldLoaded and "Rayfield" or "Custom Mobile"))
     print("   • Executor: Arceus X Compatible")
-    print("   • Lock System: Ready")
 end)
 
 getgenv().ArceusLockOnActive = true
