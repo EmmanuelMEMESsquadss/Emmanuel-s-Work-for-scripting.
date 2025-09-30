@@ -1,476 +1,395 @@
 -- LocalScript (StarterPlayerScripts)
--- WORKING Mobile Aimbot/Camlock with Minimizable UI
+-- Mobile Lock-On with Side Dash for JJS
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 -- Only run on mobile
 if not UserInputService.TouchEnabled then
-    return
+	return
 end
 
--- Settings
-local Settings = {
-    AimLock = {
-        Enabled = false,
-        Sensitivity = 0.8,
-        Prediction = 0.15,
-        TargetPart = "Head"
-    },
-    CamLock = {
-        Enabled = false,
-        Sensitivity = 0.7,
-        Prediction = 0.18,
-        Smoothness = 0.25
-    },
-    MaxDistance = 200,
-    WallCheck = false,
-    TeamCheck = false
-}
+local player = Players.LocalPlayer
+local character, humanoid, hrp
 
-local target = nil
-local connections = {}
-
--- Target functions
-local function getCharacter()
-    return player.Character
+local function setupCharacter(char)
+	character = char
+	humanoid = char:WaitForChild("Humanoid")
+	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+	if humanoid then humanoid.AutoRotate = true end
 end
 
-local function getClosestPlayer()
-    local character = getCharacter()
-    if not character or not character:FindFirstChild("HumanoidRootPart") then
-        return nil
-    end
+if player.Character then setupCharacter(player.Character) end
+player.CharacterAdded:Connect(setupCharacter)
 
-    local hrp = character.HumanoidRootPart
-    local closest = nil
-    local shortestDistance = Settings.MaxDistance
-
-    for _, v in pairs(Players:GetPlayers()) do
-        if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
-            local enemyHrp = v.Character.HumanoidRootPart
-            local enemyHumanoid = v.Character:FindFirstChildOfClass("Humanoid")
-            
-            if enemyHumanoid and enemyHumanoid.Health > 0 then
-                local distance = (hrp.Position - enemyHrp.Position).Magnitude
-                
-                if distance < shortestDistance then
-                    if not Settings.TeamCheck or v.Team ~= player.Team then
-                        shortestDistance = distance
-                        closest = v.Character
-                    end
-                end
-            end
-        end
-    end
-
-    return closest
+-- Virtual key press for dash
+local function pressKey(key)
+	VirtualInputManager:SendKeyEvent(true, key, false, game)
+	task.wait(0.05)
+	VirtualInputManager:SendKeyEvent(false, key, false, game)
 end
 
--- Create the minimizable UI
-local function createUI()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "MobileLockUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = player:WaitForChild("PlayerGui")
-
-    -- Small circular button (minimized state)
-    local miniButton = Instance.new("TextButton")
-    miniButton.Name = "MiniButton"
-    miniButton.Size = UDim2.new(0, 50, 0, 50)
-    miniButton.Position = UDim2.new(0, 20, 0.5, -25)
-    miniButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    miniButton.BorderSizePixel = 0
-    miniButton.Text = "🎯"
-    miniButton.TextColor3 = Color3.new(1, 1, 1)
-    miniButton.TextSize = 20
-    miniButton.Font = Enum.Font.GothamBold
-    miniButton.Visible = false
-    miniButton.Parent = screenGui
-
-    local miniCorner = Instance.new("UICorner")
-    miniCorner.CornerRadius = UDim.new(0.5, 0)
-    miniCorner.Parent = miniButton
-
-    local miniStroke = Instance.new("UIStroke")
-    miniStroke.Color = Color3.fromRGB(100, 100, 100)
-    miniStroke.Thickness = 2
-    miniStroke.Parent = miniButton
-
-    -- Main frame (expanded state)
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 150, 0, 180)
-    mainFrame.Position = UDim2.new(0, 20, 0.5, -90)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Visible = true
-    mainFrame.Parent = screenGui
-
-    local frameCorner = Instance.new("UICorner")
-    frameCorner.CornerRadius = UDim.new(0, 12)
-    frameCorner.Parent = mainFrame
-
-    local frameStroke = Instance.new("UIStroke")
-    frameStroke.Color = Color3.fromRGB(80, 80, 80)
-    frameStroke.Thickness = 1
-    frameStroke.Parent = mainFrame
-
-    -- Header
-    local header = Instance.new("Frame")
-    header.Size = UDim2.new(1, 0, 0, 35)
-    header.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    header.BorderSizePixel = 0
-    header.Parent = mainFrame
-
-    local headerCorner = Instance.new("UICorner")
-    headerCorner.CornerRadius = UDim.new(0, 12)
-    headerCorner.Parent = header
-
-    local headerFix = Instance.new("Frame")
-    headerFix.Size = UDim2.new(1, 0, 0.5, 0)
-    headerFix.Position = UDim2.new(0, 0, 0.5, 0)
-    headerFix.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    headerFix.BorderSizePixel = 0
-    headerFix.Parent = header
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -30, 1, 0)
-    title.Position = UDim2.new(0, 5, 0, 0)
-    title.BackgroundTransparency = 1
-    title.Text = "LOCK"
-    title.TextColor3 = Color3.new(1, 1, 1)
-    title.TextSize = 14
-    title.Font = Enum.Font.GothamBold
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = header
-
-    local minimizeBtn = Instance.new("TextButton")
-    minimizeBtn.Size = UDim2.new(0, 25, 0, 25)
-    minimizeBtn.Position = UDim2.new(1, -30, 0, 5)
-    minimizeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    minimizeBtn.BorderSizePixel = 0
-    minimizeBtn.Text = "−"
-    minimizeBtn.TextColor3 = Color3.new(1, 1, 1)
-    minimizeBtn.TextSize = 16
-    minimizeBtn.Font = Enum.Font.GothamBold
-    minimizeBtn.Parent = header
-
-    local minimizeBtnCorner = Instance.new("UICorner")
-    minimizeBtnCorner.CornerRadius = UDim.new(0.5, 0)
-    minimizeBtnCorner.Parent = minimizeBtn
-
-    -- Status
-    local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, -10, 0, 20)
-    status.Position = UDim2.new(0, 5, 0, 40)
-    status.BackgroundTransparency = 1
-    status.Text = "READY"
-    status.TextColor3 = Color3.fromRGB(100, 255, 100)
-    status.TextSize = 12
-    status.Font = Enum.Font.Gotham
-    status.TextXAlignment = Enum.TextXAlignment.Center
-    status.Parent = mainFrame
-
-    -- Aimlock button
-    local aimlockBtn = Instance.new("TextButton")
-    aimlockBtn.Size = UDim2.new(1, -10, 0, 40)
-    aimlockBtn.Position = UDim2.new(0, 5, 0, 65)
-    aimlockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    aimlockBtn.BorderSizePixel = 0
-    aimlockBtn.Text = "AIMLOCK"
-    aimlockBtn.TextColor3 = Color3.new(1, 1, 1)
-    aimlockBtn.TextSize = 14
-    aimlockBtn.Font = Enum.Font.GothamBold
-    aimlockBtn.Parent = mainFrame
-
-    local aimlockCorner = Instance.new("UICorner")
-    aimlockCorner.CornerRadius = UDim.new(0, 8)
-    aimlockCorner.Parent = aimlockBtn
-
-    -- Camlock button
-    local camlockBtn = Instance.new("TextButton")
-    camlockBtn.Size = UDim2.new(1, -10, 0, 40)
-    camlockBtn.Position = UDim2.new(0, 5, 0, 110)
-    camlockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    camlockBtn.BorderSizePixel = 0
-    camlockBtn.Text = "CAMLOCK"
-    camlockBtn.TextColor3 = Color3.new(1, 1, 1)
-    camlockBtn.TextSize = 14
-    camlockBtn.Font = Enum.Font.GothamBold
-    camlockBtn.Parent = mainFrame
-
-    local camlockCorner = Instance.new("UICorner")
-    camlockCorner.CornerRadius = UDim.new(0, 8)
-    camlockCorner.Parent = camlockBtn
-
-    -- Minimize/Maximize functionality
-    local isMinimized = false
-
-    local function minimize()
-        if isMinimized then return end
-        isMinimized = true
-        
-        local shrinkTween = TweenService:Create(
-            mainFrame,
-            TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-            {Size = UDim2.new(0, 0, 0, 0)}
-        )
-        
-        shrinkTween:Play()
-        shrinkTween.Completed:Wait()
-        
-        mainFrame.Visible = false
-        miniButton.Visible = true
-        miniButton.Size = UDim2.new(0, 0, 0, 0)
-        
-        local growTween = TweenService:Create(
-            miniButton,
-            TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-            {Size = UDim2.new(0, 50, 0, 50)}
-        )
-        
-        growTween:Play()
-    end
-
-    local function maximize()
-        if not isMinimized then return end
-        isMinimized = false
-        
-        local shrinkTween = TweenService:Create(
-            miniButton,
-            TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-            {Size = UDim2.new(0, 0, 0, 0)}
-        )
-        
-        shrinkTween:Play()
-        shrinkTween.Completed:Wait()
-        
-        miniButton.Visible = false
-        mainFrame.Visible = true
-        mainFrame.Size = UDim2.new(0, 0, 0, 0)
-        
-        local growTween = TweenService:Create(
-            mainFrame,
-            TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-            {Size = UDim2.new(0, 150, 0, 180)}
-        )
-        
-        growTween:Play()
-    end
-
-    minimizeBtn.Activated:Connect(minimize)
-    miniButton.Activated:Connect(maximize)
-
-    return {
-        gui = screenGui,
-        mainFrame = mainFrame,
-        miniButton = miniButton,
-        status = status,
-        aimlockBtn = aimlockBtn,
-        camlockBtn = camlockBtn
-    }
+local function holdKey(key, duration)
+	VirtualInputManager:SendKeyEvent(true, key, false, game)
+	task.wait(duration)
+	VirtualInputManager:SendKeyEvent(false, key, false, game)
 end
 
-local ui = createUI()
-
--- Update UI status
-local function updateStatus()
-    if Settings.AimLock.Enabled then
-        ui.status.Text = "🎯 AIM LOCKED"
-        ui.status.TextColor3 = Color3.fromRGB(255, 200, 0)
-        ui.aimlockBtn.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
-        ui.camlockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    elseif Settings.CamLock.Enabled then
-        ui.status.Text = "📹 CAM LOCKED"
-        ui.status.TextColor3 = Color3.fromRGB(0, 200, 255)
-        ui.camlockBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
-        ui.aimlockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    else
-        ui.status.Text = "READY"
-        ui.status.TextColor3 = Color3.fromRGB(100, 255, 100)
-        ui.aimlockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-        ui.camlockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    end
+-- Side dash function
+local function sideDash(direction)
+	if not hrp or not lockTarget then return end
+	
+	local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+	if not targetHRP then return end
+	
+	-- Calculate side direction relative to target
+	local toTarget = (targetHRP.Position - hrp.Position).Unit
+	local rightVector = Vector3.new(-toTarget.Z, 0, toTarget.X) -- Perpendicular vector
+	
+	local dashDirection
+	if direction == "left" then
+		dashDirection = -rightVector
+	else -- right
+		dashDirection = rightVector
+	end
+	
+	-- Face the dash direction
+	hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + dashDirection)
+	
+	task.wait(0.05)
+	
+	-- Hold W and press Q to dash
+	spawn(function()
+		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+		task.wait(0.05)
+		pressKey(Enum.KeyCode.Q)
+		task.wait(0.1)
+		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+	end)
 end
 
--- Stop all locks
-local function stopLocks()
-    Settings.AimLock.Enabled = false
-    Settings.CamLock.Enabled = false
-    target = nil
-    
-    for _, connection in pairs(connections) do
-        connection:Disconnect()
-    end
-    connections = {}
-    
-    local character = getCharacter()
-    if character and character:FindFirstChildOfClass("Humanoid") then
-        character.Humanoid.AutoRotate = true
-    end
-    
-    updateStatus()
-end
+-- GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "MobileLockUI"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
 
--- Start aimlock
-local function startAimlock()
-    stopLocks()
-    
-    target = getClosestPlayer()
-    if not target then
-        ui.status.Text = "NO TARGET"
-        ui.status.TextColor3 = Color3.fromRGB(255, 100, 100)
-        task.wait(1)
-        updateStatus()
-        return
-    end
+-- Main frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 150, 0, 200)
+mainFrame.Position = UDim2.new(0.06, 0, 0.7, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = gui
 
-    Settings.AimLock.Enabled = true
-    
-    local character = getCharacter()
-    if character and character:FindFirstChildOfClass("Humanoid") then
-        character.Humanoid.AutoRotate = false
-    end
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 10)
+frameCorner.Parent = mainFrame
 
-    connections.aimlock = RunService.RenderStepped:Connect(function()
-        local character = getCharacter()
-        if not character or not character:FindFirstChild("HumanoidRootPart") then
-            stopLocks()
-            return
-        end
+-- Lock button
+local lockBtn = Instance.new("TextButton")
+lockBtn.Size = UDim2.new(1, -10, 0, 45)
+lockBtn.Position = UDim2.new(0, 5, 0, 5)
+lockBtn.Text = "LOCK"
+lockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+lockBtn.TextColor3 = Color3.new(1, 1, 1)
+lockBtn.Font = Enum.Font.GothamBold
+lockBtn.TextSize = 18
+lockBtn.Parent = mainFrame
 
-        if not target or not target:FindFirstChild("HumanoidRootPart") then
-            target = getClosestPlayer()
-            if not target then
-                stopLocks()
-                return
-            end
-        end
+local lockCorner = Instance.new("UICorner")
+lockCorner.CornerRadius = UDim.new(0, 8)
+lockCorner.Parent = lockBtn
 
-        local hrp = character.HumanoidRootPart
-        local targetHrp = target.HumanoidRootPart
-        local targetPart = target:FindFirstChild(Settings.AimLock.TargetPart) or targetHrp
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 0, 25)
+statusLabel.Position = UDim2.new(0, 5, 0, 55)
+statusLabel.Text = "Ready"
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 12
+statusLabel.Parent = mainFrame
 
-        -- Calculate prediction
-        local velocity = targetHrp.AssemblyLinearVelocity
-        local predictedPosition = targetPart.Position + (velocity * Settings.AimLock.Prediction)
+-- Dash left button
+local dashLeftBtn = Instance.new("TextButton")
+dashLeftBtn.Size = UDim2.new(0.48, 0, 0, 40)
+dashLeftBtn.Position = UDim2.new(0, 5, 0, 85)
+dashLeftBtn.Text = "← DASH"
+dashLeftBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+dashLeftBtn.TextColor3 = Color3.new(1, 1, 1)
+dashLeftBtn.Font = Enum.Font.GothamBold
+dashLeftBtn.TextSize = 14
+dashLeftBtn.Parent = mainFrame
 
-        -- Fast, responsive rotation
-        local direction = (Vector3.new(predictedPosition.X, hrp.Position.Y, predictedPosition.Z) - hrp.Position).Unit
-        local newCFrame = CFrame.new(hrp.Position, hrp.Position + direction)
-        
-        -- Much faster lock-on with instant snap for close targets
-        local distance = (hrp.Position - targetHrp.Position).Magnitude
-        local sensitivity = distance < 50 and 1 or Settings.AimLock.Sensitivity
-        
-        hrp.CFrame = hrp.CFrame:Lerp(newCFrame, sensitivity)
-    end)
+local dashLeftCorner = Instance.new("UICorner")
+dashLeftCorner.CornerRadius = UDim.new(0, 6)
+dashLeftCorner.Parent = dashLeftBtn
 
-    updateStatus()
-end
+-- Dash right button
+local dashRightBtn = Instance.new("TextButton")
+dashRightBtn.Size = UDim2.new(0.48, 0, 0, 40)
+dashRightBtn.Position = UDim2.new(0.52, 0, 0, 85)
+dashRightBtn.Text = "DASH →"
+dashRightBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+dashRightBtn.TextColor3 = Color3.new(1, 1, 1)
+dashRightBtn.Font = Enum.Font.GothamBold
+dashRightBtn.TextSize = 14
+dashRightBtn.Parent = mainFrame
 
--- Start camlock
-local function startCamlock()
-    stopLocks()
-    
-    target = getClosestPlayer()
-    if not target then
-        ui.status.Text = "NO TARGET"
-        ui.status.TextColor3 = Color3.fromRGB(255, 100, 100)
-        task.wait(1)
-        updateStatus()
-        return
-    end
+local dashRightCorner = Instance.new("UICorner")
+dashRightCorner.CornerRadius = UDim.new(0, 6)
+dashRightCorner.Parent = dashRightBtn
 
-    Settings.CamLock.Enabled = true
+-- Dash behind button
+local dashBehindBtn = Instance.new("TextButton")
+dashBehindBtn.Size = UDim2.new(1, -10, 0, 35)
+dashBehindBtn.Position = UDim2.new(0, 5, 0, 130)
+dashBehindBtn.Text = "DASH BEHIND"
+dashBehindBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 150)
+dashBehindBtn.TextColor3 = Color3.new(1, 1, 1)
+dashBehindBtn.Font = Enum.Font.GothamBold
+dashBehindBtn.TextSize = 14
+dashBehindBtn.Parent = mainFrame
 
-    connections.camlock = RunService.RenderStepped:Connect(function()
-        if not target or not target:FindFirstChild("HumanoidRootPart") then
-            target = getClosestPlayer()
-            if not target then
-                stopLocks()
-                return
-            end
-        end
+local dashBehindCorner = Instance.new("UICorner")
+dashBehindCorner.CornerRadius = UDim.new(0, 6)
+dashBehindCorner.Parent = dashBehindBtn
 
-        local targetHrp = target.HumanoidRootPart
-        local targetPart = target:FindFirstChild(Settings.AimLock.TargetPart) or targetHrp
+-- Forward dash button
+local dashForwardBtn = Instance.new("TextButton")
+dashForwardBtn.Size = UDim2.new(1, -10, 0, 25)
+dashForwardBtn.Position = UDim2.new(0, 5, 0, 170)
+dashForwardBtn.Text = "DASH FORWARD"
+dashForwardBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+dashForwardBtn.TextColor3 = Color3.new(1, 1, 1)
+dashForwardBtn.Font = Enum.Font.Gotham
+dashForwardBtn.TextSize = 12
+dashForwardBtn.Parent = mainFrame
 
-        -- Calculate prediction
-        local velocity = targetHrp.AssemblyLinearVelocity
-        local predictedPosition = targetPart.Position + (velocity * Settings.CamLock.Prediction)
+local dashForwardCorner = Instance.new("UICorner")
+dashForwardCorner.CornerRadius = UDim.new(0, 4)
+dashForwardCorner.Parent = dashForwardBtn
 
-        -- Fast, responsive camera movement
-        local newCFrame = CFrame.new(camera.CFrame.Position, predictedPosition)
-        
-        -- Distance-based sensitivity for instant snap on close targets
-        local character = getCharacter()
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            local distance = (character.HumanoidRootPart.Position - targetHrp.Position).Magnitude
-            local smoothness = distance < 50 and 1 or Settings.CamLock.Smoothness
-            camera.CFrame = camera.CFrame:Lerp(newCFrame, smoothness)
-        else
-            camera.CFrame = camera.CFrame:Lerp(newCFrame, Settings.CamLock.Smoothness)
-        end
-    end)
-
-    updateStatus()
-end
-
--- Button connections
-ui.aimlockBtn.Activated:Connect(function()
-    if Settings.AimLock.Enabled then
-        stopLocks()
-    else
-        startAimlock()
-    end
-end)
-
-ui.camlockBtn.Activated:Connect(function()
-    if Settings.CamLock.Enabled then
-        stopLocks()
-    else
-        startCamlock()
-    end
-end)
-
--- Make UI draggable
-local dragging = false
-local dragInput, mousePos, framePos
-
+-- Draggable
+local dragging, dragInput, dragStart, startPos
 local function updateDrag(input)
-    local delta = input.Position - mousePos
-    ui.mainFrame.Position = UDim2.new(framePos.X.Scale, framePos.X.Offset + delta.X, framePos.Y.Scale, framePos.Y.Offset + delta.Y)
+	local delta = input.Position - dragStart
+	mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
-ui.mainFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        mousePos = input.Position
-        framePos = ui.mainFrame.Position
-        
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
+mainFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = mainFrame.Position
+		dragInput = input
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch and dragging then
-        updateDrag(input)
-    end
+	if dragging and input == dragInput then updateDrag(input) end
 end)
 
--- Initialize
-updateStatus()
+-- Lock state
+local MAX_DIST = 100
+local lockTarget, lockBillboard
 
-print("Mobile Lock System loaded successfully!")
-print("Features: Minimizable UI, Working Aimlock, Working Camlock")
+local function detachBillboard()
+	if lockBillboard then
+		lockBillboard:Destroy()
+		lockBillboard = nil
+	end
+end
+
+local function attachBillboard(model)
+	detachBillboard()
+	local targetHrp = model:FindFirstChild("HumanoidRootPart")
+	if not targetHrp then return end
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.new(0, 120, 0, 40)
+	bb.StudsOffset = Vector3.new(0, 3.2, 0)
+	bb.AlwaysOnTop = true
+	bb.Parent = targetHrp
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = "LOCKED"
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.TextColor3 = Color3.fromRGB(255, 80, 80)
+	label.Parent = bb
+	lockBillboard = bb
+end
+
+local function isValidTarget(model)
+	if not model or not model:IsA("Model") then return false end
+	local hum = model:FindFirstChildWhichIsA("Humanoid")
+	local part = model:FindFirstChild("HumanoidRootPart")
+	if not hum or not part or hum.Health <= 0 then return false end
+	if model == character then return false end
+	if Players:GetPlayerFromCharacter(model) == player then return false end
+	return true
+end
+
+local function getNearestTarget()
+	if not hrp then return end
+	local nearest, dist = nil, MAX_DIST
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if pl ~= player and pl.Character and isValidTarget(pl.Character) then
+			local d = (hrp.Position - pl.Character.HumanoidRootPart.Position).Magnitude
+			if d < dist then
+				dist = d
+				nearest = pl.Character
+			end
+		end
+	end
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") and isValidTarget(obj) then
+			local d = (hrp.Position - obj.HumanoidRootPart.Position).Magnitude
+			if d < dist then
+				dist = d
+				nearest = obj
+			end
+		end
+	end
+	return nearest
+end
+
+local function unlock()
+	lockTarget = nil
+	detachBillboard()
+	if humanoid then humanoid.AutoRotate = true end
+	lockBtn.Text = "LOCK"
+	lockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+	statusLabel.Text = "Ready"
+	statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+end
+
+-- Dash behind target
+local function dashBehind()
+	if not hrp or not lockTarget then return end
+	
+	local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+	if not targetHRP then return end
+	
+	-- Get direction target is facing and position behind them
+	local targetLookVector = targetHRP.CFrame.LookVector
+	local behindDirection = -targetLookVector
+	
+	-- Face behind the target
+	hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + behindDirection)
+	
+	task.wait(0.05)
+	
+	-- Dash forward (which is behind target)
+	spawn(function()
+		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+		task.wait(0.05)
+		pressKey(Enum.KeyCode.Q)
+		task.wait(0.1)
+		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+	end)
+end
+
+-- Forward dash to target
+local function dashForward()
+	if not hrp or not lockTarget then return end
+	
+	local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+	if not targetHRP then return end
+	
+	-- Face target
+	local direction = (targetHRP.Position - hrp.Position).Unit
+	hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + direction)
+	
+	task.wait(0.05)
+	
+	-- Dash
+	spawn(function()
+		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+		task.wait(0.05)
+		pressKey(Enum.KeyCode.Q)
+		task.wait(0.1)
+		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+	end)
+end
+
+-- Button connections
+lockBtn.Activated:Connect(function()
+	if lockTarget then
+		unlock()
+	else
+		local t = getNearestTarget()
+		if t then
+			lockTarget = t
+			if humanoid then humanoid.AutoRotate = false end
+			attachBillboard(t)
+			lockBtn.Text = "UNLOCK"
+			lockBtn.BackgroundColor3 = Color3.fromRGB(206, 36, 36)
+			statusLabel.Text = "Locked: " .. t.Name
+			statusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+		else
+			lockBtn.Text = "NO TARGET"
+			statusLabel.Text = "No enemies nearby"
+			statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+			task.delay(1, function()
+				if not lockTarget then
+					lockBtn.Text = "LOCK"
+					statusLabel.Text = "Ready"
+					statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+				end
+			end)
+		end
+	end
+end)
+
+dashLeftBtn.Activated:Connect(function()
+	if lockTarget then
+		sideDash("left")
+	end
+end)
+
+dashRightBtn.Activated:Connect(function()
+	if lockTarget then
+		sideDash("right")
+	end
+end)
+
+dashBehindBtn.Activated:Connect(function()
+	if lockTarget then
+		dashBehind()
+	end
+end)
+
+dashForwardBtn.Activated:Connect(function()
+	if lockTarget then
+		dashForward()
+	end
+end)
+
+-- Rotation loop (YOUR WORKING CODE - UNCHANGED)
+RunService.RenderStepped:Connect(function()
+	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
+		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
+		if targetHRP and targetHum and targetHum.Health > 0 then
+			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+		else
+			unlock()
+		end
+	end
+end)
+
+print("JJS Mobile Lock System loaded!")
+print("Features: Lock-On, Side Dash, Dash Behind, Dash Forward")
