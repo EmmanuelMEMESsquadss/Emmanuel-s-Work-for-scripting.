@@ -243,7 +243,7 @@ spawn(function()
 	end
 end)
 
--- Rotation loop with comprehensive disable detection
+-- Rotation loop with prediction and instant snap
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		-- STOP IF ANY GRAB/RAGDOLL DETECTED
@@ -260,7 +260,15 @@ RunService.RenderStepped:Connect(function()
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+			-- Get target velocity for prediction
+			local velocity = targetHRP.AssemblyLinearVelocity or targetHRP.Velocity or Vector3.new(0, 0, 0)
+			
+			-- Predict where target will be (0.1 seconds ahead)
+			local prediction = velocity * 0.1
+			local predictedPos = targetHRP.Position + prediction
+			
+			-- Instant snap to predicted position (no lerp = fastest possible)
+			local lookPos = Vector3.new(predictedPos.X, hrp.Position.Y, predictedPos.Z)
 			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
 		else
 			unlock()
