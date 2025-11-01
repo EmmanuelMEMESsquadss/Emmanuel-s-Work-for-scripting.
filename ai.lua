@@ -1,12 +1,14 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On with Advanced Grab/Ragdoll Detection
+-- Mobile Lock-On with Advanced Grab/Ragdoll Detection (v2)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 -- Only run on mobile
 if not UserInputService.TouchEnabled then
+	print("Non-mobile device detected. Lock-On script disabled.")
 	return
 end
 
@@ -14,73 +16,11 @@ local player = Players.LocalPlayer
 local character, humanoid, hrp
 local isDisabled = false
 
-local function setupCharacter(char)
-	character = char
-	humanoid = char:WaitForChild("Humanoid")
-	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
-	
-	if humanoid then 
-		humanoid.AutoRotate = true 
-		
-		-- Detect ragdoll/grab through state changes
-		humanoid.StateChanged:Connect(function(oldState, newState)
-			if newState == Enum.HumanoidStateType.Physics or 
-			   newState == Enum.HumanoidStateType.Ragdoll or
-			   newState == Enum.HumanoidStateType.FallingDown or
-			   newState == Enum.HumanoidStateType.PlatformStanding then
-				isDisabled = true
-			elseif newState == Enum.HumanoidStateType.Running or
-			       newState == Enum.HumanoidStateType.Landed or
-			       newState == Enum.HumanoidStateType.Jumping then
-				isDisabled = false
-			end
-		end)
-		
-		-- Detect PlatformStand changes (common grab method)
-		humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
-			if humanoid.PlatformStand then
-				isDisabled = true
-			else
-				isDisabled = false
-			end
-		end)
-		
-		-- Detect Sit changes (some grabs use this)
-		humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
-			if humanoid.Sit then
-				isDisabled = true
-			end
-		end)
-	end
-	
-	-- Monitor for welds/constraints added to HRP (grab detection)
-	if hrp then
-		hrp.ChildAdded:Connect(function(child)
-			if child:IsA("Weld") or child:IsA("WeldConstraint") or 
-			   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
-			   child:IsA("RopeConstraint") then
-				isDisabled = true
-				
-				-- Re-enable when constraint is removed
-				child.AncestryChanged:Connect(function()
-					if not child:IsDescendantOf(game) then
-						task.wait(0.5) -- Small delay to ensure grab ended
-						isDisabled = false
-					end
-				end)
-			end
-		end)
-	end
-end
-
-if player.Character then setupCharacter(player.Character) end
-player.CharacterAdded:Connect(setupCharacter)
-
 -- GUI
 local gui = Instance.new("ScreenGui")
 gui.Name = "LockOnUI"
 gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
+gui.Parent = PlayerGui
 
 local btn = Instance.new("TextButton")
 btn.Size = UDim2.new(0, 110, 0, 50)
@@ -97,7 +37,6 @@ local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = btn
 
--- Status indicator (small)
 local statusDot = Instance.new("Frame")
 statusDot.Size = UDim2.new(0, 8, 0, 8)
 statusDot.Position = UDim2.new(1, -12, 0, 4)
@@ -170,13 +109,17 @@ local function isValidTarget(model)
 	local part = model:FindFirstChild("HumanoidRootPart")
 	if not hum or not part or hum.Health <= 0 then return false end
 	if model == character then return false end
-	if Players:GetPlayerFromCharacter(model) == player then return false end
 	return true
 end
 
+-- === IMPROVED getNearestTarget ===
+-- This function is now more efficient and won't check players twice.
 local function getNearestTarget()
 	if not hrp then return end
 	local nearest, dist = nil, MAX_DIST
+	local playerCharacters = {} -- A set to ignore later
+	
+	-- 1. Check all players
 	for _, pl in ipairs(Players:GetPlayers()) do
 		if pl ~= player and pl.Character and isValidTarget(pl.Character) then
 			local d = (hrp.Position - pl.Character.HumanoidRootPart.Position).Magnitude
@@ -184,10 +127,14 @@ local function getNearestTarget()
 				dist = d
 				nearest = pl.Character
 			end
+			playerCharacters[pl.Character] = true -- Add to ignore list
 		end
 	end
+	
+	-- 2. Check all other models in workspace (NPCs, etc.)
 	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("Model") and isValidTarget(obj) then
+		-- Only check models that ARE NOT player characters and ARE valid
+		if obj:IsA("Model") and not playerCharacters[obj] and isValidTarget(obj) then
 			local targetHrp = obj:FindFirstChild("HumanoidRootPart")
 			if targetHrp then
 				local d = (hrp.Position - targetHrp.Position).Magnitude
@@ -204,11 +151,73 @@ end
 local function unlock()
 	lockTarget = nil
 	detachBillboard()
-	if humanoid then humanoid.AutoRotate = true end
+	if humanoid then 
+		humanoid.AutoRotate = true 
+	end
 	btn.Text = "LOCK"
 	btn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
 end
 
+-- Main Setup Function
+local function setupCharacter(char)
+	-- Wrap in pcall to prevent errors on weird spawns
+	pcall(function()
+		character = char
+		humanoid = char:WaitForChild("Humanoid")
+		hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+		
+		if humanoid then 
+			humanoid.AutoRotate = true 
+			
+			humanoid.StateChanged:Connect(function(oldState, newState)
+				if newState == Enum.HumanoidStateType.Physics or 
+				   newState == Enum.HumanoidStateType.Ragdoll or
+				   newState == Enum.HumanoidStateType.FallingDown or
+				   newState == Enum.HumanoidStateType.PlatformStanding then
+					isDisabled = true
+				elseif newState == Enum.HumanoidStateType.Running or
+					   newState == Enum.HumanoidStateType.Landed or
+					   newState == Enum.HumanoidStateType.Jumping then
+					isDisabled = false
+				end
+			end)
+			
+			humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+				isDisabled = humanoid.PlatformStand
+			end)
+			
+			humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+				if humanoid.Sit then
+					isDisabled = true
+				end
+			end)
+		end
+		
+		if hrp then
+			hrp.ChildAdded:Connect(function(child)
+				if child:IsA("Weld") or child:IsA("WeldConstraint") or 
+				   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
+				   child:IsA("RopeConstraint") then
+					
+					isDisabled = true
+					
+					-- Re-enable when constraint is removed
+					child.AncestryChanged:Connect(function()
+						if not child:IsDescendantOf(game) then
+							task.wait(0.5)
+							-- Only set false if still alive and not in a bad state
+							if humanoid and humanoid.Health > 0 and not humanoid.PlatformStand and not humanoid.Sit then
+								isDisabled = false
+							end
+						end
+					end)
+				end
+			end)
+		end
+	end)
+end
+
+-- Button Logic
 btn.Activated:Connect(function()
 	if lockTarget then
 		unlock()
@@ -216,7 +225,9 @@ btn.Activated:Connect(function()
 		local t = getNearestTarget()
 		if t then
 			lockTarget = t
-			if humanoid then humanoid.AutoRotate = false end
+			if humanoid then 
+				humanoid.AutoRotate = false -- Take control
+			end
 			attachBillboard(t)
 			btn.Text = "UNLOCK"
 			btn.BackgroundColor3 = Color3.fromRGB(206, 36, 36)
@@ -232,42 +243,63 @@ btn.Activated:Connect(function()
 end)
 
 -- Update status indicator
-spawn(function()
+task.spawn(function()
 	while true do
-		wait(0.1)
+		task.wait(0.1)
 		if isDisabled then
-			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red when disabled
+			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red
 		else
-			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green when active
+			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green
 		end
 	end
 end)
 
--- Rotation loop - INSTANT with no prediction
+-- === (THE FIX) IMPROVED Rotation loop ===
+local wasDisabled = false -- Keep track of the previous state
+
 RunService.RenderStepped:Connect(function()
-	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
-		-- STOP IF ANY GRAB/RAGDOLL DETECTED
-		if isDisabled then
-			return -- Keep lock but don't rotate
-		end
-		
-		-- Additional real-time checks
-		if humanoid.PlatformStand or humanoid.Sit then
-			return
-		end
-		
-		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
-		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
-		
-		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Direct instant rotation - no prediction, no smoothing
-			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
-		else
-			unlock()
-		end
+	if not lockTarget or not hrp or not humanoid or humanoid.Health <= 0 then
+		return 
 	end
+
+	-- Check target validity FIRST
+	local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
+	local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
+	if not (targetHRP and targetHum and targetHum.Health > 0) then
+		unlock() -- Target is invalid, unlock completely
+		return
+	end
+
+	-- Now, handle grab/ragdoll state
+	if isDisabled then
+		-- We are grabbed/ragdolled.
+		-- Release camera control so it follows the ragdoll/grab physics.
+		if humanoid.AutoRotate == false then
+			humanoid.AutoRotate = true
+		end
+		wasDisabled = true -- Flag that we were disabled
+		return -- Do NOT apply our own rotation
+	end
+	
+	-- If we're here, isDisabled is false. We are NOT grabbed.
+	
+	-- Check if we *just* came out of a disabled state
+	if wasDisabled then
+		humanoid.AutoRotate = false -- Re-take control of camera
+		wasDisabled = false
+	end
+
+	-- We are not disabled, and we have a valid target.
+	-- Apply the lock-on rotation.
+	pcall(function()
+		local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+		hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+	end)
 end)
 
-print("Mobile Lock System loaded!")
-print("Features: Lock-On with Advanced Grab/Ragdoll Detection")
+-- Initial setup
+if player.Character then setupCharacter(player.Character) end
+player.CharacterAdded:Connect(setupCharacter)
+
+print("Mobile Lock System v2 loaded!")
+print("FIX: Camera now releases on grab/ragdoll.")
