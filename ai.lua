@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On System - Character-Based Lock (Like TSB)
+-- Mobile Lock-On System - Simplified Detection
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -173,75 +173,34 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- SIMPLE & FAST: Check if we should rotate
-local function canRotate()
-	if not humanoid or humanoid.Health <= 0 then return false end
-	if not hrp or not hrp.Parent then return false end
+-- SIMPLIFIED: Only check for MAJOR issues (grabs, cutscenes, death)
+local function shouldSkipRotation()
+	if not humanoid or humanoid.Health <= 0 then return true end
+	if not hrp or not hrp.Parent then return true end
 	
-	-- Only skip rotation during these specific conditions
-	-- Check 1: Humanoid states that mean loss of control
+	-- Check 1: Camera changed (cutscenes/finishers)
+	if camera.CameraType ~= Enum.CameraType.Custom or camera.CameraSubject ~= humanoid then
+		return true
+	end
+	
+	-- Check 2: Ragdoll/Physics states only
 	local state = humanoid:GetState()
 	if state == Enum.HumanoidStateType.Physics or 
 	   state == Enum.HumanoidStateType.Ragdoll or
-	   state == Enum.HumanoidStateType.FallingDown or
-	   state == Enum.HumanoidStateType.PlatformStanding then
-		return false
+	   state == Enum.HumanoidStateType.FallingDown then
+		return true
 	end
 	
-	-- Check 2: Platform stand (common grab/finisher flag)
+	-- Check 3: Platform stand (grab indicator)
 	if humanoid.PlatformStand then
-		return false
+		return true
 	end
 	
-	-- Check 3: Sitting (some grabs use this)
-	if humanoid.Sit then
-		return false
-	end
-	
-	-- Check 4: Camera manipulation (cutscenes/finishers)
-	if camera.CameraType ~= Enum.CameraType.Custom then
-		return false
-	end
-	
-	-- Check 5: Camera subject changed (ultimate/finisher cutscenes)
-	if camera.CameraSubject ~= humanoid then
-		return false
-	end
-	
-	-- Check 6: HRP is anchored (finishers often anchor)
-	if hrp.Anchored then
-		return false
-	end
-	
-	-- Check 7: HRP has constraints (finishers add welds/constraints)
-	for _, child in ipairs(hrp:GetChildren()) do
-		if child:IsA("Weld") or child:IsA("WeldConstraint") or 
-		   child:IsA("Motor6D") or child:IsA("Attachment") or
-		   child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
-			return false
-		end
-	end
-	
-	-- Check 8: WalkSpeed is 0 (finishers disable movement)
-	if humanoid.WalkSpeed == 0 then
-		return false
-	end
-	
-	-- Check 9: JumpPower/Height is 0 (finishers disable jumping)
-	if humanoid.JumpPower == 0 or humanoid.JumpHeight == 0 then
-		return false
-	end
-	
-	-- Check 10: High velocity (being thrown/launched in finisher)
-	if hrp.AssemblyLinearVelocity.Magnitude > 100 then
-		return false
-	end
-	
-	-- All checks passed - safe to rotate
-	return true
+	-- That's it! Let rotation happen for everything else
+	return false
 end
 
--- SMOOTH CFRAME ROTATION - Character stays locked, only skips rotation when grabbed
+-- SMOOTH ROTATION LOOP
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
@@ -253,25 +212,20 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- Only rotate if we can (not grabbed/in cutscene)
-		if canRotate() then
-			-- Smooth lock-on rotation (only Y-axis)
+		-- Only skip rotation for major issues (grabs/cutscenes)
+		if not shouldSkipRotation() then
+			-- Calculate direction to target
 			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 			local targetCFrame = CFrame.new(hrp.Position, lookPos)
 			
-			-- Lerp for smooth rotation
-			local currentCFrame = hrp.CFrame
-			local newCFrame = currentCFrame:Lerp(targetCFrame, ROTATION_SPEED)
+			-- Smooth lerp rotation
+			local newCFrame = hrp.CFrame:Lerp(targetCFrame, ROTATION_SPEED)
 			
-			-- Preserve Y position exactly to prevent floating
-			newCFrame = CFrame.new(hrp.Position.X, hrp.Position.Y, hrp.Position.Z) * 
-			            (newCFrame - newCFrame.Position)
-			
-			hrp.CFrame = newCFrame
+			-- Apply rotation (wrapped in pcall for safety)
+			pcall(function()
+				hrp.CFrame = newCFrame
+			end)
 		end
-		-- Note: If canRotate() returns false, we simply skip rotation this frame
-		-- The lock stays active, billboard stays visible, button stays "UNLOCK"
-		-- Character just doesn't rotate until they regain control
 	end
 end)
 
@@ -280,6 +234,6 @@ player.CharacterRemoving:Connect(function()
 	unlock()
 end)
 
-print("Mobile Lock System loaded! (Character-Based Lock)")
-print("Rotation Speed: " .. ROTATION_SPEED .. " (adjust line 17)")
-print("Lock stays ON during grabs - rotation pauses automatically")
+print("Mobile Lock System loaded! (Simplified Detection)")
+print("Rotation Speed: " .. ROTATION_SPEED)
+print("Only stops rotation for: Camera changes, Ragdoll, PlatformStand")
