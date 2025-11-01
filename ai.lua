@@ -17,6 +17,7 @@ local isDisabled = false
 
 -- Configuration
 local MAX_DIST = 100
+local ROTATION_SPEED = 0.15 -- Smooth rotation (0.1 = slower, 0.3 = faster)
 local CUTSCENE_CHECK_INTERVAL = 0.05
 
 local function setupCharacter(char)
