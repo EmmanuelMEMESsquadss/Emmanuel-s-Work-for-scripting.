@@ -1,6 +1,7 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On with Camera Control (v8)
--- FIX: Controls the CAMERA, not the CHARACTER. This prevents all conflicts.
+-- Mobile Lock-On (v8)
+-- FIX: Added robust Anchor and multi-part constraint checks to
+--      prevent CFrame "tug-of-war" during cutscenes or grabs.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,7 +15,7 @@ if not UserInputService.TouchEnabled then
 end
 
 local player = Players.LocalPlayer
-local character, humanoid, hrp
+local character, humanoid, hrp, upperTorso, lowerTorso
 local camera = workspace.CurrentCamera
 
 -- GUI (No changes)
@@ -114,7 +115,6 @@ local function isValidTarget(model)
 	return true
 end
 
--- Optimized Target Finding
 local function getNearestTarget()
 	if not hrp then return end
 	local nearest, dist = nil, MAX_DIST
@@ -151,43 +151,67 @@ local function getNearestTarget()
 			checkedModels[model] = true
 		end
 	end
+	
 	return nearest
 end
 
 local function unlock()
 	lockTarget = nil
 	detachBillboard()
-	-- No longer need to touch AutoRotate
+	if humanoid then 
+		humanoid.AutoRotate = true 
+	end
 	btn.Text = "LOCK"
 	btn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
 end
 
--- === (THE FIX) v8 - Scene-Aware Check ===
--- This function now only checks if the GAME is controlling the camera.
--- It no longer cares about the character's physical state.
-local function isGameControllingCamera()
-	if not humanoid or not hrp then return true end
+-- === (THE FIX) v8 - Robust Scene/Grab Detection ===
+local function isCharacterControllable()
+	if not humanoid or not hrp then return false end
 
-	-- 1. Check Camera Type/Subject
-	if camera.CameraType == Enum.CameraType.Scriptable then
-		return true -- Obvious cutscene
-	end
-	if camera.CameraSubject ~= humanoid then
-		return true -- Camera is locked onto something else
-	end
-	
-	-- 2. Check Camera Focus
-	if (camera.Focus.Position - hrp.Position).Magnitude > 10 then
-		return true -- Camera focus has been pulled away
-	end
-	
-	-- 3. Check FOV
-	if math.abs(camera.FieldOfView - normalFOV) > 15 then
-		return true -- Camera is zoomed for a scene
+	-- 1. Check Camera (for cutscenes)
+	if camera.CameraType == Enum.CameraType.Scriptable then return false end
+	if camera.CameraSubject ~= humanoid then return false end
+	if (camera.Focus.Position - hrp.Position).Magnitude > 10 then return false end
+	if math.abs(camera.FieldOfView - normalFOV) > 15 then return false end
+
+	-- 2. Check for physical/property states
+	local state = humanoid:GetState()
+	if state == Enum.HumanoidStateType.Physics or
+	   state == Enum.HumanoidStateType.Ragdoll or
+	   state == Enum.HumanoidStateType.FallingDown or
+	   state == Enum.HumanoidStateType.Stunned or
+	   state == Enum.HumanoidStateType.GettingUp then
+		return false
 	end
 	
-	-- If none of the above, the game is NOT controlling the camera
-	return false
+	if humanoid.PlatformStand or humanoid.Sit then
+		return false
+	end
+	
+	-- 3. NEW: Check if Anchored (common scene/grab technique)
+	if hrp.Anchored then
+		return false
+	end
+
+	-- 4. NEW: Expanded Constraint Check (for grabs/scenes)
+	-- Check HRP, UpperTorso, and LowerTorso for any non-tool constraints
+	local partsToCheck = {hrp, upperTorso, lowerTorso}
+	for _, part in ipairs(partsToCheck) do
+		if part then
+			for _, child in ipairs(part:GetChildren()) do
+				if child:IsA("Weld") or child:IsA("Constraint") then
+					-- Ignore tool grip welds
+					if child.Name ~= "RightGrip" and child.Name ~= "LeftGrip" then
+						return false -- This is a grab or scene weld!
+					end
+				end
+			end
+		end
+	end
+	
+	-- If none of the above, we are controllable
+	return true
 end
 
 -- Main Setup Function
@@ -195,7 +219,13 @@ local function setupCharacter(char)
 	character = char
 	humanoid = char:WaitForChild("Humanoid")
 	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
-	-- We no longer touch AutoRotate here
+	-- Store references to torso parts for the grab check
+	upperTorso = char:FindFirstChild("UpperTorso")
+	lowerTorso = char:FindFirstChild("LowerTorso")
+	
+	if humanoid then
+		humanoid.AutoRotate = true
+	end
 	normalFOV = camera.FieldOfView
 end
 
@@ -225,18 +255,18 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(0.1)
-		-- Dot now reflects if a scene is active
-		if isGameControllingCamera() then
-			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red (Game has control)
+		-- Update dot based on the *real-time* check
+		if isCharacterControllable() then
+			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green
 		else
-			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green (Script can run)
+			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red
 		end
 	end
 end)
 
--- === (THE FIX) v8 - Main Loop ===
--- This loop now *ONLY* controls the camera.
+-- === (THE FIX) Main Loop v8 ===
 RunService.RenderStepped:Connect(function()
+	-- Only run if we have a target
 	if not lockTarget or not hrp or not humanoid or humanoid.Health <= 0 then
 		return 
 	end
@@ -249,19 +279,25 @@ RunService.RenderStepped:Connect(function()
 		return
 	end
 
-	-- 2. Check if the game is in a scene
-	if isGameControllingCamera() then
-		-- The game is in a cutscene.
-		-- Do *not* apply the camera lock. Let the game do its thing.
-		return 
+	-- 2. Check *our* state (frame-accurate)
+	if isCharacterControllable() then
+		-- We are good to go. Take control and aim.
+		if humanoid.AutoRotate == true then
+			humanoid.AutoRotate = false
+		end
+		
+		-- Apply CFrame lock
+		pcall(function()
+			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+		end)
+	else
+		-- We are grabbed/ragdolled/in a cutscene.
+		-- Release camera control so it follows the game's script.
+		if humanoid.AutoRotate == false then
+			humanoid.AutoRotate = true
+		end
 	end
-	
-	-- 3. We are clear! Apply the camera lock.
-	-- This will not fight physics. Your character can be grabbed,
-	-- but your camera will stay locked on the target.
-	pcall(function()
-		camera.CFrame = CFrame.new(camera.CFrame.Position, targetHRP.Position)
-	end)
 end)
 
 -- Initial setup
@@ -269,4 +305,4 @@ if player.Character then setupCharacter(player.Character) end
 player.CharacterAdded:Connect(setupCharacter)
 
 print("Mobile Lock System v8 loaded!")
-print("FIX: Now controls CAMERA CFrame, not CHARACTER CFrame. No more conflicts.")
+print("FIX: Added Anchored and expanded constraint checks to prevent camera 'tug-of-war'.")
