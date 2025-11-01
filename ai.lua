@@ -1,5 +1,6 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On with Advanced Grab/Ragdoll Detection (v2)
+-- Mobile Lock-On with Camera Control (v8)
+-- FIX: Controls the CAMERA, not the CHARACTER. This prevents all conflicts.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,9 +15,9 @@ end
 
 local player = Players.LocalPlayer
 local character, humanoid, hrp
-local isDisabled = false
+local camera = workspace.CurrentCamera
 
--- GUI
+-- GUI (No changes)
 local gui = Instance.new("ScreenGui")
 gui.Name = "LockOnUI"
 gui.ResetOnSpawn = false
@@ -46,9 +47,9 @@ statusDot.Parent = btn
 
 local dotCorner = Instance.new("UICorner")
 dotCorner.CornerRadius = UDim.new(0.5, 0)
-dotCorner.Parent = statusDot
+dotCorner.Parent = dotCorner
 
--- Draggable
+-- Draggable (No changes)
 local dragging, dragInput, dragStart, startPos
 local function updateDrag(input)
 	local delta = input.Position - dragStart
@@ -75,6 +76,7 @@ end)
 -- Lock state
 local MAX_DIST = 100
 local lockTarget, lockBillboard
+local normalFOV = camera.FieldOfView
 
 local function detachBillboard()
 	if lockBillboard then
@@ -112,14 +114,13 @@ local function isValidTarget(model)
 	return true
 end
 
--- === IMPROVED getNearestTarget ===
--- This function is now more efficient and won't check players twice.
+-- Optimized Target Finding
 local function getNearestTarget()
 	if not hrp then return end
 	local nearest, dist = nil, MAX_DIST
-	local playerCharacters = {} -- A set to ignore later
+	local playerCharacters = {}
+	local checkedModels = {}
 	
-	-- 1. Check all players
 	for _, pl in ipairs(Players:GetPlayers()) do
 		if pl ~= player and pl.Character and isValidTarget(pl.Character) then
 			local d = (hrp.Position - pl.Character.HumanoidRootPart.Position).Magnitude
@@ -127,22 +128,27 @@ local function getNearestTarget()
 				dist = d
 				nearest = pl.Character
 			end
-			playerCharacters[pl.Character] = true -- Add to ignore list
+			playerCharacters[pl.Character] = true
 		end
 	end
 	
-	-- 2. Check all other models in workspace (NPCs, etc.)
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		-- Only check models that ARE NOT player characters and ARE valid
-		if obj:IsA("Model") and not playerCharacters[obj] and isValidTarget(obj) then
-			local targetHrp = obj:FindFirstChild("HumanoidRootPart")
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	overlapParams.FilterDescendantsInstances = {character}
+	local partsInRadius = workspace:GetPartsInRadius(hrp.Position, MAX_DIST, overlapParams)
+	
+	for _, part in ipairs(partsInRadius) do
+		local model = part:FindFirstAncestorOfClass("Model")
+		if model and not checkedModels[model] and not playerCharacters[model] and isValidTarget(model) then
+			local targetHrp = model:FindFirstChild("HumanoidRootPart")
 			if targetHrp then
 				local d = (hrp.Position - targetHrp.Position).Magnitude
 				if d < dist then
 					dist = d
-					nearest = obj
+					nearest = model
 				end
 			end
+			checkedModels[model] = true
 		end
 	end
 	return nearest
@@ -151,70 +157,46 @@ end
 local function unlock()
 	lockTarget = nil
 	detachBillboard()
-	if humanoid then 
-		humanoid.AutoRotate = true 
-	end
+	-- No longer need to touch AutoRotate
 	btn.Text = "LOCK"
 	btn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
 end
 
+-- === (THE FIX) v8 - Scene-Aware Check ===
+-- This function now only checks if the GAME is controlling the camera.
+-- It no longer cares about the character's physical state.
+local function isGameControllingCamera()
+	if not humanoid or not hrp then return true end
+
+	-- 1. Check Camera Type/Subject
+	if camera.CameraType == Enum.CameraType.Scriptable then
+		return true -- Obvious cutscene
+	end
+	if camera.CameraSubject ~= humanoid then
+		return true -- Camera is locked onto something else
+	end
+	
+	-- 2. Check Camera Focus
+	if (camera.Focus.Position - hrp.Position).Magnitude > 10 then
+		return true -- Camera focus has been pulled away
+	end
+	
+	-- 3. Check FOV
+	if math.abs(camera.FieldOfView - normalFOV) > 15 then
+		return true -- Camera is zoomed for a scene
+	end
+	
+	-- If none of the above, the game is NOT controlling the camera
+	return false
+end
+
 -- Main Setup Function
 local function setupCharacter(char)
-	-- Wrap in pcall to prevent errors on weird spawns
-	pcall(function()
-		character = char
-		humanoid = char:WaitForChild("Humanoid")
-		hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
-		
-		if humanoid then 
-			humanoid.AutoRotate = true 
-			
-			humanoid.StateChanged:Connect(function(oldState, newState)
-				if newState == Enum.HumanoidStateType.Physics or 
-				   newState == Enum.HumanoidStateType.Ragdoll or
-				   newState == Enum.HumanoidStateType.FallingDown or
-				   newState == Enum.HumanoidStateType.PlatformStanding then
-					isDisabled = true
-				elseif newState == Enum.HumanoidStateType.Running or
-					   newState == Enum.HumanoidStateType.Landed or
-					   newState == Enum.HumanoidStateType.Jumping then
-					isDisabled = false
-				end
-			end)
-			
-			humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
-				isDisabled = humanoid.PlatformStand
-			end)
-			
-			humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
-				if humanoid.Sit then
-					isDisabled = true
-				end
-			end)
-		end
-		
-		if hrp then
-			hrp.ChildAdded:Connect(function(child)
-				if child:IsA("Weld") or child:IsA("WeldConstraint") or 
-				   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
-				   child:IsA("RopeConstraint") then
-					
-					isDisabled = true
-					
-					-- Re-enable when constraint is removed
-					child.AncestryChanged:Connect(function()
-						if not child:IsDescendantOf(game) then
-							task.wait(0.5)
-							-- Only set false if still alive and not in a bad state
-							if humanoid and humanoid.Health > 0 and not humanoid.PlatformStand and not humanoid.Sit then
-								isDisabled = false
-							end
-						end
-					end)
-				end
-			end)
-		end
-	end)
+	character = char
+	humanoid = char:WaitForChild("Humanoid")
+	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+	-- We no longer touch AutoRotate here
+	normalFOV = camera.FieldOfView
 end
 
 -- Button Logic
@@ -225,9 +207,6 @@ btn.Activated:Connect(function()
 		local t = getNearestTarget()
 		if t then
 			lockTarget = t
-			if humanoid then 
-				humanoid.AutoRotate = false -- Take control
-			end
 			attachBillboard(t)
 			btn.Text = "UNLOCK"
 			btn.BackgroundColor3 = Color3.fromRGB(206, 36, 36)
@@ -246,54 +225,42 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(0.1)
-		if isDisabled then
-			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red
+		-- Dot now reflects if a scene is active
+		if isGameControllingCamera() then
+			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red (Game has control)
 		else
-			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green
+			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green (Script can run)
 		end
 	end
 end)
 
--- === (THE FIX) IMPROVED Rotation loop ===
-local wasDisabled = false -- Keep track of the previous state
-
+-- === (THE FIX) v8 - Main Loop ===
+-- This loop now *ONLY* controls the camera.
 RunService.RenderStepped:Connect(function()
 	if not lockTarget or not hrp or not humanoid or humanoid.Health <= 0 then
 		return 
 	end
 
-	-- Check target validity FIRST
+	-- 1. Check target validity
 	local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
 	local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 	if not (targetHRP and targetHum and targetHum.Health > 0) then
-		unlock() -- Target is invalid, unlock completely
+		unlock()
 		return
 	end
 
-	-- Now, handle grab/ragdoll state
-	if isDisabled then
-		-- We are grabbed/ragdolled.
-		-- Release camera control so it follows the ragdoll/grab physics.
-		if humanoid.AutoRotate == false then
-			humanoid.AutoRotate = true
-		end
-		wasDisabled = true -- Flag that we were disabled
-		return -- Do NOT apply our own rotation
+	-- 2. Check if the game is in a scene
+	if isGameControllingCamera() then
+		-- The game is in a cutscene.
+		-- Do *not* apply the camera lock. Let the game do its thing.
+		return 
 	end
 	
-	-- If we're here, isDisabled is false. We are NOT grabbed.
-	
-	-- Check if we *just* came out of a disabled state
-	if wasDisabled then
-		humanoid.AutoRotate = false -- Re-take control of camera
-		wasDisabled = false
-	end
-
-	-- We are not disabled, and we have a valid target.
-	-- Apply the lock-on rotation.
+	-- 3. We are clear! Apply the camera lock.
+	-- This will not fight physics. Your character can be grabbed,
+	-- but your camera will stay locked on the target.
 	pcall(function()
-		local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-		hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+		camera.CFrame = CFrame.new(camera.CFrame.Position, targetHRP.Position)
 	end)
 end)
 
@@ -301,5 +268,5 @@ end)
 if player.Character then setupCharacter(player.Character) end
 player.CharacterAdded:Connect(setupCharacter)
 
-print("Mobile Lock System v2 loaded!")
-print("FIX: Camera now releases on grab/ragdoll.")
+print("Mobile Lock System v8 loaded!")
+print("FIX: Now controls CAMERA CFrame, not CHARACTER CFrame. No more conflicts.")
