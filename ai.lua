@@ -176,17 +176,19 @@ end)
 -- SIMPLE & FAST: Check if we should rotate
 local function canRotate()
 	if not humanoid or humanoid.Health <= 0 then return false end
+	if not hrp or not hrp.Parent then return false end
 	
 	-- Only skip rotation during these specific conditions
 	-- Check 1: Humanoid states that mean loss of control
 	local state = humanoid:GetState()
 	if state == Enum.HumanoidStateType.Physics or 
 	   state == Enum.HumanoidStateType.Ragdoll or
-	   state == Enum.HumanoidStateType.FallingDown then
+	   state == Enum.HumanoidStateType.FallingDown or
+	   state == Enum.HumanoidStateType.PlatformStanding then
 		return false
 	end
 	
-	-- Check 2: Platform stand (common grab flag)
+	-- Check 2: Platform stand (common grab/finisher flag)
 	if humanoid.PlatformStand then
 		return false
 	end
@@ -196,18 +198,42 @@ local function canRotate()
 		return false
 	end
 	
-	-- Check 4: Camera manipulation (cutscenes)
+	-- Check 4: Camera manipulation (cutscenes/finishers)
 	if camera.CameraType ~= Enum.CameraType.Custom then
 		return false
 	end
 	
-	-- Check 5: Camera subject changed (ultimate cutscenes)
+	-- Check 5: Camera subject changed (ultimate/finisher cutscenes)
 	if camera.CameraSubject ~= humanoid then
 		return false
 	end
 	
-	-- Check 6: HRP is anchored
-	if hrp and hrp.Anchored then
+	-- Check 6: HRP is anchored (finishers often anchor)
+	if hrp.Anchored then
+		return false
+	end
+	
+	-- Check 7: HRP has constraints (finishers add welds/constraints)
+	for _, child in ipairs(hrp:GetChildren()) do
+		if child:IsA("Weld") or child:IsA("WeldConstraint") or 
+		   child:IsA("Motor6D") or child:IsA("Attachment") or
+		   child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
+			return false
+		end
+	end
+	
+	-- Check 8: WalkSpeed is 0 (finishers disable movement)
+	if humanoid.WalkSpeed == 0 then
+		return false
+	end
+	
+	-- Check 9: JumpPower/Height is 0 (finishers disable jumping)
+	if humanoid.JumpPower == 0 or humanoid.JumpHeight == 0 then
+		return false
+	end
+	
+	-- Check 10: High velocity (being thrown/launched in finisher)
+	if hrp.AssemblyLinearVelocity.Magnitude > 100 then
 		return false
 	end
 	
