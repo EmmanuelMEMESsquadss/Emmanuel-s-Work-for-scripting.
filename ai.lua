@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On System - Fixed Camera & Grab Detection
+-- Mobile Lock-On System - Instant CFrame with Smart Detection
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,19 +14,16 @@ local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 local character, humanoid, hrp
 local isDisabled = false
-local wasDisabled = false
 
 -- Configuration
 local MAX_DIST = 100
-local ROTATION_SPEED = 0.25 -- Smooth rotation instead of instant
-local CHECK_INTERVAL = 0.1
+local CUTSCENE_CHECK_INTERVAL = 0.05
 
 local function setupCharacter(char)
 	character = char
 	humanoid = char:WaitForChild("Humanoid")
 	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
 	isDisabled = false
-	wasDisabled = false
 	
 	if humanoid then 
 		humanoid.AutoRotate = true
@@ -39,76 +36,101 @@ local function setupCharacter(char)
 				[Enum.HumanoidStateType.FallingDown] = true,
 				[Enum.HumanoidStateType.PlatformStanding] = true,
 				[Enum.HumanoidStateType.Swimming] = true,
-				[Enum.HumanoidStateType.Climbing] = true,
 			}
 			
 			if disablingStates[newState] then
 				isDisabled = true
-				wasDisabled = true
-			elseif newState == Enum.HumanoidStateType.Running or
-			       newState == Enum.HumanoidStateType.Landed or
-			       newState == Enum.HumanoidStateType.Jumping or
-			       newState == Enum.HumanoidStateType.Freefall then
-				-- Small delay before re-enabling
-				task.wait(0.2)
-				isDisabled = false
+				-- Wait a bit before re-enabling
+				task.spawn(function()
+					task.wait(0.5)
+					if newState ~= humanoid:GetState() then
+						isDisabled = false
+					end
+				end)
 			end
 		end)
 		
 		-- Property monitoring
 		humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
 			isDisabled = humanoid.PlatformStand
-			if isDisabled then wasDisabled = true end
 		end)
 		
 		humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
 			isDisabled = humanoid.Sit
-			if isDisabled then wasDisabled = true end
 		end)
 		
-		-- Monitor WalkSpeed (many grabs set this to 0)
+		-- Critical: Monitor WalkSpeed (grabs often set to 0)
 		humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
 			if humanoid.WalkSpeed == 0 and humanoid.Health > 0 then
 				isDisabled = true
-				wasDisabled = true
+				-- Re-enable when WalkSpeed returns
+				task.spawn(function()
+					while humanoid.WalkSpeed == 0 do
+						task.wait(0.1)
+					end
+					task.wait(0.3)
+					isDisabled = false
+				end)
+			end
+		end)
+		
+		-- Monitor JumpPower/Height (some moves disable jumping)
+		humanoid:GetPropertyChangedSignal("JumpPower"):Connect(function()
+			if humanoid.JumpPower == 0 then
+				isDisabled = true
+				task.spawn(function()
+					while humanoid.JumpPower == 0 do task.wait(0.1) end
+					task.wait(0.2)
+					isDisabled = false
+				end)
 			end
 		end)
 	end
 	
 	-- Monitor HRP for constraints/welds
 	if hrp then
-		-- Check for camera manipulation
-		local function checkForCutscene()
-			if camera.CameraType ~= Enum.CameraType.Custom then
-				isDisabled = true
-				wasDisabled = true
-			end
-		end
+		-- Camera monitoring (critical for cutscenes)
+		local lastCameraType = camera.CameraType
+		local lastCameraSubject = camera.CameraSubject
 		
-		camera:GetPropertyChangedSignal("CameraType"):Connect(checkForCutscene)
-		camera:GetPropertyChangedSignal("CameraSubject"):Connect(function()
-			if camera.CameraSubject ~= humanoid then
-				isDisabled = true
-				wasDisabled = true
+		task.spawn(function()
+			while hrp and hrp.Parent do
+				-- Check camera every frame for instant detection
+				if camera.CameraType ~= Enum.CameraType.Custom or 
+				   camera.CameraSubject ~= humanoid then
+					isDisabled = true
+					lastCameraType = camera.CameraType
+					lastCameraSubject = camera.CameraSubject
+				elseif isDisabled and 
+				       camera.CameraType == Enum.CameraType.Custom and
+				       camera.CameraSubject == humanoid then
+					-- Camera returned to normal, wait a bit then re-enable
+					task.wait(0.3)
+					if camera.CameraType == Enum.CameraType.Custom and
+					   camera.CameraSubject == humanoid then
+						isDisabled = false
+					end
+				end
+				task.wait(CUTSCENE_CHECK_INTERVAL)
 			end
 		end)
 		
-		-- Monitor for constraints
+		-- Monitor for constraints (grabs/moves)
 		hrp.ChildAdded:Connect(function(child)
 			if child:IsA("Weld") or child:IsA("WeldConstraint") or 
 			   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
 			   child:IsA("RopeConstraint") or child:IsA("BodyGyro") or
-			   child:IsA("BodyPosition") or child:IsA("BodyVelocity") then
+			   child:IsA("BodyPosition") or child:IsA("BodyVelocity") or
+			   child:IsA("BodyAngularVelocity") or child:IsA("Attachment") then
 				isDisabled = true
-				wasDisabled = true
 				
 				-- Re-enable when removed
 				child.AncestryChanged:Connect(function()
 					if not child:IsDescendantOf(game) then
-						task.wait(0.3)
-						-- Check if still valid to re-enable
+						task.wait(0.4)
 						if humanoid and humanoid.Health > 0 and 
-						   not humanoid.PlatformStand and not humanoid.Sit then
+						   not humanoid.PlatformStand and not humanoid.Sit and
+						   camera.CameraType == Enum.CameraType.Custom then
 							isDisabled = false
 						end
 					end
@@ -116,13 +138,29 @@ local function setupCharacter(char)
 			end
 		end)
 		
-		-- Monitor network ownership changes (common during grabs)
-		hrp:GetPropertyChangedSignal("AssemblyLinearVelocity"):Connect(function()
-			local vel = hrp.AssemblyLinearVelocity
-			-- Extremely high velocity = likely grabbed/launched
-			if vel.Magnitude > 200 then
+		-- Monitor anchored state (some moves anchor the character)
+		hrp:GetPropertyChangedSignal("Anchored"):Connect(function()
+			if hrp.Anchored then
 				isDisabled = true
-				wasDisabled = true
+				task.spawn(function()
+					while hrp.Anchored do task.wait(0.1) end
+					task.wait(0.3)
+					isDisabled = false
+				end)
+			end
+		end)
+		
+		-- Network ownership check (if we don't own it, we can't rotate it properly)
+		task.spawn(function()
+			while hrp and hrp.Parent do
+				local canSetNetworkOwner = pcall(function()
+					hrp:GetNetworkOwner()
+				end)
+				if not canSetNetworkOwner then
+					-- We don't have network ownership, likely grabbed
+					isDisabled = true
+				end
+				task.wait(0.1)
 			end
 		end)
 	end
@@ -293,76 +331,88 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
--- FIXED ROTATION SYSTEM - Uses BodyGyro instead of direct CFrame manipulation
-local bodyGyro
-local lastRotation = tick()
+-- INSTANT CFRAME ROTATION with Smart Safety Checks
+local lastPosition = nil
+local stuckCounter = 0
 
-local function createBodyGyro()
-	if bodyGyro then bodyGyro:Destroy() end
-	bodyGyro = Instance.new("BodyGyro")
-	bodyGyro.MaxTorque = Vector3.new(0, 400000, 0) -- Only Y-axis
-	bodyGyro.P = 30000
-	bodyGyro.D = 500
-	bodyGyro.Parent = hrp
-end
-
-local function removeBodyGyro()
-	if bodyGyro then
-		bodyGyro:Destroy()
-		bodyGyro = nil
-	end
-end
-
--- Smooth rotation loop
-RunService.Heartbeat:Connect(function(dt)
+RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
-		-- CRITICAL: Stop ALL rotation during grabs/cutscenes
+		-- CRITICAL SAFETY CHECKS - Don't rotate if ANY of these are true
 		if isDisabled then
-			removeBodyGyro()
 			return
 		end
 		
-		-- Additional safety checks
-		if humanoid.PlatformStand or humanoid.Sit or 
-		   camera.CameraType ~= Enum.CameraType.Custom or
+		-- Real-time safety checks
+		if humanoid.PlatformStand or humanoid.Sit or hrp.Anchored then
+			return
+		end
+		
+		-- Camera check (instant detection of cutscenes)
+		if camera.CameraType ~= Enum.CameraType.Custom or 
 		   camera.CameraSubject ~= humanoid then
-			removeBodyGyro()
 			return
 		end
 		
+		-- Check if we're being moved externally (velocity check)
+		local velocity = hrp.AssemblyLinearVelocity
+		if velocity.Magnitude > 150 then
+			-- High velocity = likely grabbed/launched
+			return
+		end
+		
+		-- Check if position is stuck (indicates loss of control)
+		if lastPosition then
+			local posDiff = (hrp.Position - lastPosition).Magnitude
+			if posDiff < 0.01 and humanoid.MoveDirection.Magnitude > 0 then
+				stuckCounter = stuckCounter + 1
+				if stuckCounter > 10 then
+					-- Character is stuck, likely grabbed
+					return
+				end
+			else
+				stuckCounter = 0
+			end
+		end
+		lastPosition = hrp.Position
+		
+		-- Check for external constraints
+		local hasConstraint = false
+		for _, child in ipairs(hrp:GetChildren()) do
+			if child:IsA("Constraint") or child:IsA("Weld") or 
+			   child:IsA("BodyMover") or child.Name:find("Body") then
+				hasConstraint = true
+				break
+			end
+		end
+		if hasConstraint then
+			return
+		end
+		
+		-- All checks passed - perform INSTANT rotation
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Create BodyGyro if needed
-			if not bodyGyro or bodyGyro.Parent ~= hrp then
-				createBodyGyro()
-			end
-			
-			-- Calculate target direction
+			-- Instant lock-on rotation (only Y-axis)
 			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-			local targetCFrame = CFrame.new(hrp.Position, lookPos)
+			local newCFrame = CFrame.new(hrp.Position, lookPos)
 			
-			-- Smooth interpolation
-			local currentCFrame = hrp.CFrame
-			local newCFrame = currentCFrame:Lerp(targetCFrame, ROTATION_SPEED)
+			-- Preserve Y position exactly to prevent floating
+			newCFrame = CFrame.new(hrp.Position.X, hrp.Position.Y, hrp.Position.Z) * 
+			            (newCFrame - newCFrame.Position)
 			
-			-- Apply via BodyGyro (network-friendly)
-			bodyGyro.CFrame = newCFrame
+			hrp.CFrame = newCFrame
 		else
 			unlock()
-			removeBodyGyro()
 		end
-	else
-		removeBodyGyro()
 	end
 end)
 
 -- Cleanup on character reset
 player.CharacterRemoving:Connect(function()
-	removeBodyGyro()
 	unlock()
 end)
 
-print("Mobile Lock System loaded! (Fixed Version)")
-print("Features: Smooth rotation, grab detection, camera-safe")
+print("Mobile Lock System loaded! (Instant CFrame - Smart Detection)")
+print("Lock stays disabled during: Grabs, Cutscenes, Ragdolls, High velocity")
+print("Status: READY - Green dot = Active, Red dot = Disabled")
