@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On System - Simplified Detection
+-- Mobile Lock-On System - Simple & Clean (Like Jump Showdown/Heroes BG)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,12 +11,11 @@ if not UserInputService.TouchEnabled then
 end
 
 local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
 local character, humanoid, hrp
 
 -- Configuration
 local MAX_DIST = 100
-local ROTATION_SPEED = 0.2 -- Smooth rotation (0.1 = slower, 0.3 = faster)
+local ROTATION_SPEED = 0.18 -- Smooth rotation speed
 
 local function setupCharacter(char)
 	character = char
@@ -173,34 +172,7 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- SIMPLIFIED: Only check for MAJOR issues (grabs, cutscenes, death)
-local function shouldSkipRotation()
-	if not humanoid or humanoid.Health <= 0 then return true end
-	if not hrp or not hrp.Parent then return true end
-	
-	-- Check 1: Camera changed (cutscenes/finishers)
-	if camera.CameraType ~= Enum.CameraType.Custom or camera.CameraSubject ~= humanoid then
-		return true
-	end
-	
-	-- Check 2: Ragdoll/Physics states only
-	local state = humanoid:GetState()
-	if state == Enum.HumanoidStateType.Physics or 
-	   state == Enum.HumanoidStateType.Ragdoll or
-	   state == Enum.HumanoidStateType.FallingDown then
-		return true
-	end
-	
-	-- Check 3: Platform stand (grab indicator)
-	if humanoid.PlatformStand then
-		return true
-	end
-	
-	-- That's it! Let rotation happen for everything else
-	return false
-end
-
--- SMOOTH ROTATION LOOP
+-- SIMPLE ROTATION - Just keep trying, pcall handles errors
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
@@ -212,8 +184,8 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- Only skip rotation for major issues (grabs/cutscenes)
-		if not shouldSkipRotation() then
+		-- Always try to rotate - pcall catches any errors
+		pcall(function()
 			-- Calculate direction to target
 			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 			local targetCFrame = CFrame.new(hrp.Position, lookPos)
@@ -221,11 +193,10 @@ RunService.RenderStepped:Connect(function()
 			-- Smooth lerp rotation
 			local newCFrame = hrp.CFrame:Lerp(targetCFrame, ROTATION_SPEED)
 			
-			-- Apply rotation (wrapped in pcall for safety)
-			pcall(function()
-				hrp.CFrame = newCFrame
-			end)
-		end
+			-- Apply rotation
+			hrp.CFrame = newCFrame
+		end)
+		-- If pcall fails (grab/cutscene), it just silently fails and tries again next frame
 	end
 end)
 
@@ -234,6 +205,6 @@ player.CharacterRemoving:Connect(function()
 	unlock()
 end)
 
-print("Mobile Lock System loaded! (Simplified Detection)")
+print("Mobile Lock System loaded! (Jump Showdown/Heroes BG Style)")
 print("Rotation Speed: " .. ROTATION_SPEED)
-print("Only stops rotation for: Camera changes, Ragdoll, PlatformStand")
+print("Simple & clean - just keeps trying to rotate!")
