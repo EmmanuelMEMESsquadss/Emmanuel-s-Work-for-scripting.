@@ -184,20 +184,24 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- CHECK FOR WELDS/CONSTRAINTS IN HRP (GRAB DETECTION)
-		local hasWeld = false
+		-- CHECK FOR GRAB WELDS IN HRP (NOT NORMAL JOINTS)
+		local hasGrabWeld = false
 		for _, child in ipairs(hrp:GetChildren()) do
-			if child:IsA("WeldConstraint") or child:IsA("Weld") or 
-			   child:IsA("ManualWeld") or child:IsA("Motor") or
-			   child:IsA("Motor6D") then
-				-- Found a weld = we're grabbed, DON'T ROTATE
-				hasWeld = true
+			-- Check for abnormal welds (grabs add these)
+			if (child:IsA("WeldConstraint") or child:IsA("Weld") or child:IsA("ManualWeld")) then
+				-- Found an abnormal weld = we're grabbed
+				hasGrabWeld = true
+				break
+			end
+			-- Check for AlignPosition/AlignOrientation (some grabs use these)
+			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
+				hasGrabWeld = true
 				break
 			end
 		end
 		
 		-- Only rotate if NOT grabbed
-		if not hasWeld then
+		if not hasGrabWeld then
 			pcall(function()
 				-- Calculate direction to target
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
@@ -221,4 +225,4 @@ end)
 
 print("Mobile Lock System loaded!")
 print("Rotation Speed: " .. ROTATION_SPEED)
-print("NO camera manipulation - lets game handle it!")
+print("WELD DETECTION - Stops rotation when grabbed!")
