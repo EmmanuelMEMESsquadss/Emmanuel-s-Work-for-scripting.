@@ -172,7 +172,7 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- ROTATION ONLY - NO CAMERA MANIPULATION
+-- ROTATION ONLY - DETECTS WELDS/GRABS
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
@@ -184,18 +184,33 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- Try to rotate - pcall catches errors silently
-		pcall(function()
-			-- Calculate direction to target
-			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-			local targetCFrame = CFrame.new(hrp.Position, lookPos)
-			
-			-- Smooth lerp rotation
-			local newCFrame = hrp.CFrame:Lerp(targetCFrame, ROTATION_SPEED)
-			
-			-- Apply rotation
-			hrp.CFrame = newCFrame
-		end)
+		-- CHECK FOR WELDS/CONSTRAINTS IN HRP (GRAB DETECTION)
+		local hasWeld = false
+		for _, child in ipairs(hrp:GetChildren()) do
+			if child:IsA("WeldConstraint") or child:IsA("Weld") or 
+			   child:IsA("ManualWeld") or child:IsA("Motor") or
+			   child:IsA("Motor6D") then
+				-- Found a weld = we're grabbed, DON'T ROTATE
+				hasWeld = true
+				break
+			end
+		end
+		
+		-- Only rotate if NOT grabbed
+		if not hasWeld then
+			pcall(function()
+				-- Calculate direction to target
+				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+				local targetCFrame = CFrame.new(hrp.Position, lookPos)
+				
+				-- Smooth lerp rotation
+				local newCFrame = hrp.CFrame:Lerp(targetCFrame, ROTATION_SPEED)
+				
+				-- Apply rotation
+				hrp.CFrame = newCFrame
+			end)
+		end
+		-- If hasWeld = true, we skip rotation completely
 	end
 end)
 
