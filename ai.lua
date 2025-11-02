@@ -173,6 +173,9 @@ btn.Activated:Connect(function()
 end)
 
 -- ROTATION ONLY - DETECTS WELDS/GRABS
+local lastState = Enum.HumanoidStateType.Running
+local wasGrabbing = false
+
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
@@ -184,24 +187,25 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- CHECK FOR GRAB WELDS IN HRP (NOT NORMAL JOINTS)
-		local hasGrabWeld = false
-		for _, child in ipairs(hrp:GetChildren()) do
-			-- Check for abnormal welds (grabs add these)
-			if (child:IsA("WeldConstraint") or child:IsA("Weld") or child:IsA("ManualWeld")) then
-				-- Found an abnormal weld = we're grabbed
-				hasGrabWeld = true
-				break
-			end
-			-- Check for AlignPosition/AlignOrientation (some grabs use these)
-			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
-				hasGrabWeld = true
-				break
-			end
+		-- SIMPLE CHECK - Only stop if humanoid loses control
+		local shouldStopRotating = false
+		
+		-- Check if humanoid states indicate loss of control
+		local state = humanoid:GetState()
+		if state == Enum.HumanoidStateType.Physics or 
+		   state == Enum.HumanoidStateType.Ragdoll or
+		   humanoid.PlatformStand then
+			shouldStopRotating = true
+			wasGrabbing = true
 		end
 		
-		-- Only rotate if NOT grabbed
-		if not hasGrabWeld then
+		-- If we were grabbing and now we're not, reset
+		if wasGrabbing and not shouldStopRotating then
+			wasGrabbing = false
+		end
+		
+		-- Only rotate if we have control
+		if not shouldStopRotating then
 			pcall(function()
 				-- Calculate direction to target
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
@@ -213,8 +217,11 @@ RunService.RenderStepped:Connect(function()
 				-- Apply rotation
 				hrp.CFrame = newCFrame
 			end)
+		else
+			-- Debug: Print when rotation is stopped
+			print("Rotation stopped - State:", state, "PlatformStand:", humanoid.PlatformStand)
 		end
-		-- If hasWeld = true, we skip rotation completely
+		-- If shouldStopRotating = true, we skip rotation
 	end
 end)
 
@@ -225,4 +232,4 @@ end)
 
 print("Mobile Lock System loaded!")
 print("Rotation Speed: " .. ROTATION_SPEED)
-print("WELD DETECTION - Stops rotation when grabbed!")
+print("SIMPLE - Only checks humanoid states (Physics/Ragdoll/PlatformStand)")
