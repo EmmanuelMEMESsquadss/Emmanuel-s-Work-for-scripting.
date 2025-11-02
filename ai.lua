@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On System - Simple & Clean (Like Jump Showdown/Heroes BG)
+-- Mobile Lock-On System - NO CAMERA MANIPULATION
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,16 +11,11 @@ if not UserInputService.TouchEnabled then
 end
 
 local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
 local character, humanoid, hrp
-
--- Store original camera settings
-local originalCameraSubject = nil
-local originalCameraType = nil
 
 -- Configuration
 local MAX_DIST = 100
-local ROTATION_SPEED = 0.35 -- Smooth rotation speed (faster)
+local ROTATION_SPEED = 0.35 -- Smooth rotation speed
 
 local function setupCharacter(char)
 	character = char
@@ -177,7 +172,7 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- SIMPLE ROTATION - Just keep trying, pcall handles errors
+-- ROTATION ONLY - NO CAMERA MANIPULATION
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
@@ -189,7 +184,7 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- Always try to rotate - pcall catches any errors
+		-- Try to rotate - pcall catches errors silently
 		pcall(function()
 			-- Calculate direction to target
 			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
@@ -201,7 +196,6 @@ RunService.RenderStepped:Connect(function()
 			-- Apply rotation
 			hrp.CFrame = newCFrame
 		end)
-		-- If pcall fails (grab/cutscene), it just silently fails and tries again next frame
 	end
 end)
 
@@ -210,6 +204,6 @@ player.CharacterRemoving:Connect(function()
 	unlock()
 end)
 
-print("Mobile Lock System loaded! (Jump Showdown/Heroes BG Style)")
+print("Mobile Lock System loaded!")
 print("Rotation Speed: " .. ROTATION_SPEED)
-print("Simple & clean - just keeps trying to rotate!")
+print("NO camera manipulation - lets game handle it!")
