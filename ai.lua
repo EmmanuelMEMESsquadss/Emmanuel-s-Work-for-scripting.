@@ -11,11 +11,16 @@ if not UserInputService.TouchEnabled then
 end
 
 local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
 local character, humanoid, hrp
+
+-- Store original camera settings
+local originalCameraSubject = nil
+local originalCameraType = nil
 
 -- Configuration
 local MAX_DIST = 100
-local ROTATION_SPEED = 0.18 -- Smooth rotation speed
+local ROTATION_SPEED = 0.35 -- Smooth rotation speed (faster)
 
 local function setupCharacter(char)
 	character = char
