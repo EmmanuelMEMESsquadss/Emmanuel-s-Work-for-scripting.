@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On System - NO CAMERA MANIPULATION
+-- Mobile Lock-On System - Jump Showdown Compatible
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,7 +15,7 @@ local character, humanoid, hrp
 
 -- Configuration
 local MAX_DIST = 100
-local ROTATION_SPEED = 0.35 -- Smooth rotation speed
+local ROTATION_SPEED = 0.35
 
 local function setupCharacter(char)
 	character = char
@@ -172,11 +172,12 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- ROTATION ONLY - DETECTS WELDS/GRABS
-local lastState = Enum.HumanoidStateType.Running
-local wasGrabbing = false
+-- Track last successful rotation
+local lastRotationTime = tick()
+local rotationFailCount = 0
 
-RunService.RenderStepped:Connect(function()
+-- MINIMAL ROTATION - Only try if conditions are perfect
+RunService.Heartbeat:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
@@ -187,41 +188,55 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- SIMPLE CHECK - Only stop if humanoid loses control
-		local shouldStopRotating = false
+		-- Check if we can safely rotate (very minimal checks)
+		local canRotate = true
 		
-		-- Check if humanoid states indicate loss of control
+		-- Only stop if CLEARLY in a bad state
+		if not hrp.Parent or hrp.Anchored then
+			canRotate = false
+		end
+		
+		-- Check if being ragdolled OR performing a grab
 		local state = humanoid:GetState()
-		if state == Enum.HumanoidStateType.Physics or 
-		   state == Enum.HumanoidStateType.Ragdoll or
-		   humanoid.PlatformStand then
-			shouldStopRotating = true
-			wasGrabbing = true
+		if state == Enum.HumanoidStateType.Physics or state == Enum.HumanoidStateType.Ragdoll then
+			canRotate = false
 		end
 		
-		-- If we were grabbing and now we're not, reset
-		if wasGrabbing and not shouldStopRotating then
-			wasGrabbing = false
+		-- Check if WE are grabbing someone (welds to other characters in our HRP)
+		for _, child in ipairs(hrp:GetChildren()) do
+			if child:IsA("WeldConstraint") or child:IsA("Weld") then
+				-- If there's a weld, we're likely grabbing someone
+				canRotate = false
+				break
+			end
 		end
 		
-		-- Only rotate if we have control
-		if not shouldStopRotating then
-			pcall(function()
-				-- Calculate direction to target
+		-- Check if HumanoidRootPart has high velocity (being thrown/grabbed)
+		if hrp.AssemblyLinearVelocity.Magnitude > 50 then
+			canRotate = false
+		end
+		
+		-- Try rotation with success tracking
+		if canRotate then
+			local success = pcall(function()
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 				local targetCFrame = CFrame.new(hrp.Position, lookPos)
-				
-				-- Smooth lerp rotation
 				local newCFrame = hrp.CFrame:Lerp(targetCFrame, ROTATION_SPEED)
-				
-				-- Apply rotation
 				hrp.CFrame = newCFrame
 			end)
-		else
-			-- Debug: Print when rotation is stopped
-			print("Rotation stopped - State:", state, "PlatformStand:", humanoid.PlatformStand)
+			
+			if success then
+				lastRotationTime = tick()
+				rotationFailCount = 0
+			else
+				rotationFailCount = rotationFailCount + 1
+				-- If failing too much, might be in cutscene - wait longer
+				if rotationFailCount > 30 then
+					task.wait(0.5)
+					rotationFailCount = 0
+				end
+			end
 		end
-		-- If shouldStopRotating = true, we skip rotation
 	end
 end)
 
@@ -230,6 +245,6 @@ player.CharacterRemoving:Connect(function()
 	unlock()
 end)
 
-print("Mobile Lock System loaded!")
+print("Mobile Lock System - Jump Showdown Edition")
 print("Rotation Speed: " .. ROTATION_SPEED)
-print("SIMPLE - Only checks humanoid states (Physics/Ragdoll/PlatformStand)")
+print("Minimal detection - lets game control during cutscenes!")
