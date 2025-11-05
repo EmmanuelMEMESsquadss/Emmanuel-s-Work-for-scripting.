@@ -281,10 +281,9 @@ RunService.RenderStepped:Connect(function()
 		if targetHRP and targetHum and targetHum.Health > 0 then
 			-- Wrapped in pcall to prevent errors during cutscenes
 			pcall(function()
-				-- Smooth rotation with lerp (0.3 = fast but smooth)
+				-- Direct instant rotation
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-				local targetCFrame = CFrame.new(hrp.Position, lookPos)
-				hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, 0.3)
+				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
 			end)
 		else
 			unlock()
@@ -293,4 +292,5 @@ RunService.RenderStepped:Connect(function()
 end)
 
 print("Mobile Lock System loaded!")
-print("Features: Lock-On with Grab/Ragdoll Detection + Smooth Rotation")
+print("Features: Lock-On with Grab/Ragdoll/Cutscene Detection")
+print("NEW: Camera subject & type detection added!")
