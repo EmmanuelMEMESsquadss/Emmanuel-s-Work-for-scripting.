@@ -267,12 +267,21 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- CRITICAL: Check if Motor6Ds still exist (ragdoll detection)
-		-- If any original Motor6D is missing/destroyed = RAGDOLLED
+		-- CRITICAL: Multi-layer ragdoll detection
+		-- Check 1: Motor6Ds destroyed or disabled
 		for _, motor in ipairs(originalMotors) do
-			if not motor.Parent then
-				-- Motor6D destroyed = ragdolled, STOP ROTATING
+			if not motor.Parent or (motor:IsA("Motor6D") and not motor.Enabled) then
 				return
+			end
+		end
+		
+		-- Check 2: BallSocketConstraints added (ragdoll joints)
+		if character then
+			for _, desc in ipairs(character:GetDescendants()) do
+				if desc:IsA("BallSocketConstraint") then
+					-- Ragdoll constraint found = STOP
+					return
+				end
 			end
 		end
 		
