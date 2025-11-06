@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On with Advanced Grab/Ragdoll Detection
+-- Mobile Lock-On with Motor6D Ragdoll Detection
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -13,12 +13,22 @@ end
 local player = Players.LocalPlayer
 local character, humanoid, hrp
 local isDisabled = false
-local camera = workspace.CurrentCamera
+
+-- Store original Motor6Ds to detect when they're destroyed (ragdoll)
+local originalMotors = {}
 
 local function setupCharacter(char)
 	character = char
 	humanoid = char:WaitForChild("Humanoid")
 	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+	originalMotors = {}
+	
+	-- Store all original Motor6Ds in the character
+	for _, desc in ipairs(char:GetDescendants()) do
+		if desc:IsA("Motor6D") then
+			table.insert(originalMotors, desc)
+		end
+	end
 	
 	if humanoid then 
 		humanoid.AutoRotate = true 
@@ -65,31 +75,13 @@ local function setupCharacter(char)
 				-- Re-enable when constraint is removed
 				child.AncestryChanged:Connect(function()
 					if not child:IsDescendantOf(game) then
-						task.wait(0.5) -- Small delay to ensure grab ended
+						task.wait(0.5)
 						isDisabled = false
 					end
 				end)
 			end
 		end)
 	end
-	
-	-- NEW: Detect camera subject changes (cutscenes/finishers)
-	camera:GetPropertyChangedSignal("CameraSubject"):Connect(function()
-		if camera.CameraSubject ~= humanoid then
-			isDisabled = true
-		else
-			isDisabled = false
-		end
-	end)
-	
-	-- NEW: Detect camera type changes (scriptable = cutscene)
-	camera:GetPropertyChangedSignal("CameraType"):Connect(function()
-		if camera.CameraType ~= Enum.CameraType.Custom then
-			isDisabled = true
-		else
-			isDisabled = false
-		end
-	end)
 end
 
 if player.Character then setupCharacter(player.Character) end
@@ -255,19 +247,19 @@ spawn(function()
 	while true do
 		wait(0.1)
 		if isDisabled then
-			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red when disabled
+			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 		else
-			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green when active
+			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
 		end
 	end
 end)
 
--- Rotation loop - SMOOTH with pcall protection
+-- Rotation loop with MOTOR6D CHECK (detects ragdoll instantly)
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		-- STOP IF ANY GRAB/RAGDOLL DETECTED
 		if isDisabled then
-			return -- Keep lock but don't rotate
+			return
 		end
 		
 		-- Additional real-time checks
@@ -275,13 +267,21 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
+		-- CRITICAL: Check if Motor6Ds still exist (ragdoll detection)
+		-- If any original Motor6D is missing/destroyed = RAGDOLLED
+		for _, motor in ipairs(originalMotors) do
+			if not motor.Parent then
+				-- Motor6D destroyed = ragdolled, STOP ROTATING
+				return
+			end
+		end
+		
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Wrapped in pcall to prevent errors during cutscenes
+			-- Direct instant rotation
 			pcall(function()
-				-- Direct instant rotation
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
 			end)
@@ -292,5 +292,4 @@ RunService.RenderStepped:Connect(function()
 end)
 
 print("Mobile Lock System loaded!")
-print("Features: Lock-On with Grab/Ragdoll/Cutscene Detection")
-print("NEW: Camera subject & type detection added!")
+print("Motor6D Ragdoll Detection - Stops rotation when joints destroyed!")
