@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On - SIMPLE Ragdoll Detection
+-- Mobile Lock-On for Jump Showdown & Heroes Battlegrounds
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -169,35 +169,19 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- UNIVERSAL: Check ALL possible grab/control methods
+-- PRECISE: Only check for Ragdoll/Physics + AlignPosition (most common)
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
-		-- Get current state INSTANTLY every frame
+		-- Check 1: Ragdoll state (actual ragdoll)
 		local state = humanoid:GetState()
-		
-		-- Check 1: Ragdoll states
 		if state == Enum.HumanoidStateType.Physics or 
 		   state == Enum.HumanoidStateType.Ragdoll then
 			return
 		end
 		
-		-- Check 2: ALL constraint types (modern & legacy)
+		-- Check 2: ONLY AlignPosition/AlignOrientation (grabs in both games)
 		for _, child in ipairs(hrp:GetChildren()) do
-			-- Modern constraints
 			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
-				return
-			end
-			-- Legacy BodyMovers (still used by many games)
-			if child:IsA("BodyPosition") or child:IsA("BodyGyro") or 
-			   child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
-				return
-			end
-			-- Modern alternatives
-			if child:IsA("VectorForce") or child:IsA("LineForce") then
-				return
-			end
-			-- Welds (some games still use these)
-			if child:IsA("Weld") or child:IsA("WeldConstraint") then
 				return
 			end
 		end
@@ -206,7 +190,7 @@ RunService.RenderStepped:Connect(function()
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Instant rotation with pcall protection
+			-- Instant rotation with pcall
 			pcall(function()
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
@@ -217,5 +201,5 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
-print("Mobile Lock System - AlignPosition Detection!")
-print("Detects grabs via AlignPosition/AlignOrientation constraints!")
+print("Mobile Lock System - Jump Showdown & Heroes BG")
+print("Detects: Ragdoll + AlignPosition ONLY")
