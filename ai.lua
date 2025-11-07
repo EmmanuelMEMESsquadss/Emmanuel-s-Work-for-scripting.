@@ -169,7 +169,7 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- ENHANCED: Check for AlignPosition/AlignOrientation (grabs use these!)
+-- UNIVERSAL: Check ALL possible grab/control methods
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		-- Get current state INSTANTLY every frame
@@ -181,21 +181,24 @@ RunService.RenderStepped:Connect(function()
 			return
 		end
 		
-		-- Check 2: AlignPosition/AlignOrientation in HRP (GRABS!)
+		-- Check 2: ALL constraint types (modern & legacy)
 		for _, child in ipairs(hrp:GetChildren()) do
+			-- Modern constraints
 			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
-				return -- Being controlled by grab, DON'T ROTATE
+				return
 			end
-		end
-		
-		-- Check 3: AlignPosition/AlignOrientation in HRP's attachments
-		for _, attachment in ipairs(hrp:GetChildren()) do
-			if attachment:IsA("Attachment") then
-				for _, constraint in ipairs(attachment:GetChildren()) do
-					if constraint:IsA("AlignPosition") or constraint:IsA("AlignOrientation") then
-						return -- Being controlled by grab
-					end
-				end
+			-- Legacy BodyMovers (still used by many games)
+			if child:IsA("BodyPosition") or child:IsA("BodyGyro") or 
+			   child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+				return
+			end
+			-- Modern alternatives
+			if child:IsA("VectorForce") or child:IsA("LineForce") then
+				return
+			end
+			-- Welds (some games still use these)
+			if child:IsA("Weld") or child:IsA("WeldConstraint") then
+				return
 			end
 		end
 		
@@ -214,5 +217,5 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
-print("Mobile Lock System - SIMPLE")
-print("Only checks Physics/Ragdoll state - nothing else!")
+print("Mobile Lock System - AlignPosition Detection!")
+print("Detects grabs via AlignPosition/AlignOrientation constraints!")
