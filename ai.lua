@@ -169,17 +169,17 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- PRECISE: Only check for Ragdoll/Physics + AlignPosition (most common)
+-- SIMPLE & CLEAN: Just check conditions, don't overthink
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
-		-- Check 1: Ragdoll state (actual ragdoll)
+		-- Check 1: Ragdoll state
 		local state = humanoid:GetState()
 		if state == Enum.HumanoidStateType.Physics or 
 		   state == Enum.HumanoidStateType.Ragdoll then
 			return
 		end
 		
-		-- Check 2: ONLY AlignPosition/AlignOrientation (grabs in both games)
+		-- Check 2: AlignPosition/AlignOrientation (grabs)
 		for _, child in ipairs(hrp:GetChildren()) do
 			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
 				return
@@ -190,11 +190,12 @@ RunService.RenderStepped:Connect(function()
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Instant rotation with pcall
-			pcall(function()
+			-- Rotate with pcall (prevents errors, not desync)
+			local success, err = pcall(function()
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
 			end)
+			-- If it fails, pcall catches it and we just skip this frame
 		else
 			unlock()
 		end
