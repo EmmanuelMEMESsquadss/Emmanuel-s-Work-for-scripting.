@@ -169,16 +169,34 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- ULTRA SIMPLE: Just check humanoid state in real-time
+-- ENHANCED: Check for AlignPosition/AlignOrientation (grabs use these!)
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
 		-- Get current state INSTANTLY every frame
 		local state = humanoid:GetState()
 		
-		-- ONLY stop for these specific ragdoll states
+		-- Check 1: Ragdoll states
 		if state == Enum.HumanoidStateType.Physics or 
 		   state == Enum.HumanoidStateType.Ragdoll then
-			return -- Stop rotating during ragdoll
+			return
+		end
+		
+		-- Check 2: AlignPosition/AlignOrientation in HRP (GRABS!)
+		for _, child in ipairs(hrp:GetChildren()) do
+			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
+				return -- Being controlled by grab, DON'T ROTATE
+			end
+		end
+		
+		-- Check 3: AlignPosition/AlignOrientation in HRP's attachments
+		for _, attachment in ipairs(hrp:GetChildren()) do
+			if attachment:IsA("Attachment") then
+				for _, constraint in ipairs(attachment:GetChildren()) do
+					if constraint:IsA("AlignPosition") or constraint:IsA("AlignOrientation") then
+						return -- Being controlled by grab
+					end
+				end
+			end
 		end
 		
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
