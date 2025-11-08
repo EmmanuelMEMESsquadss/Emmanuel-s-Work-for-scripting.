@@ -247,6 +247,13 @@ local function unlockCam()
 	camLockBtn.Text = "CAM LOCK"
 	camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
 	if not charLockTarget then detachBillboard() end
+	-- Restore camera to normal
+	if camera then
+		camera.CameraType = Enum.CameraType.Custom
+		if humanoid then
+			camera.CameraSubject = humanoid
+		end
+	end
 end
 
 -- Character Lock Button
@@ -329,35 +336,45 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
--- Camera Lock loop (CONSOLE-STYLE)
-local CAMERA_DISTANCE = 12 -- Distance behind player
-local CAMERA_HEIGHT = 2 -- Height above player
+-- Camera Lock loop (CONSOLE-STYLE - FORCED OVERRIDE!)
+local CAMERA_DISTANCE = 15
+local CAMERA_HEIGHT = 3
 
 RunService.RenderStepped:Connect(function()
-	if camLockTarget and camera and hrp then
+	if camLockTarget and camera and hrp and humanoid then
+		-- FORCE camera to scriptable EVERY FRAME (prevents default camera from taking over)
+		camera.CameraType = Enum.CameraType.Scriptable
+		
 		local targetHRP = camLockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = camLockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Calculate camera position BEHIND player, LOOKING at target
+			-- Get player position
 			local playerPos = hrp.Position + Vector3.new(0, CAMERA_HEIGHT, 0)
 			
-			-- Direction from player to target
-			local targetDirection = (targetHRP.Position - playerPos).Unit
+			-- Calculate direction from player to target
+			local directionToTarget = (targetHRP.Position - playerPos).Unit
 			
 			-- Position camera BEHIND player
-			local cameraPos = playerPos - (targetDirection * CAMERA_DISTANCE)
+			local cameraPosition = playerPos - (directionToTarget * CAMERA_DISTANCE)
 			
-			-- Make camera look at target
-			local cameraCFrame = CFrame.new(cameraPos, targetHRP.Position)
+			-- Point camera at target
+			local targetLook = CFrame.new(cameraPosition, targetHRP.Position)
 			
-			-- Smooth camera movement
-			camera.CFrame = camera.CFrame:Lerp(cameraCFrame, 0.15)
+			-- Smooth transition
+			camera.CFrame = camera.CFrame:Lerp(targetLook, 0.2)
 		else
 			unlockCam()
 		end
 	end
+	
+	-- Force restore when not locked (prevent camera from staying scriptable)
+	if not camLockTarget and camera.CameraType == Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Custom
+		camera.CameraSubject = humanoid
+	end
 end)
 
-print("Mobile Lock System + Camlock loaded!")
-print("CHAR LOCK = Rotates character | CAM LOCK = Locks camera")
+print("Mobile Lock System + Console Camlock loaded!")
+print("CHAR LOCK = Rotates character | CAM LOCK = Console-style camera")
+print("Camlock keeps YOU in frame while looking at target!")
