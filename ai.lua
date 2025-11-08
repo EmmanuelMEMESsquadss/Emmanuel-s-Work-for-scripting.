@@ -329,15 +329,30 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
--- Camera Lock loop (NEW)
+-- Camera Lock loop (CONSOLE-STYLE)
+local CAMERA_DISTANCE = 12 -- Distance behind player
+local CAMERA_HEIGHT = 2 -- Height above player
+
 RunService.RenderStepped:Connect(function()
-	if camLockTarget and camera then
+	if camLockTarget and camera and hrp then
 		local targetHRP = camLockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = camLockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Lock camera to target
-			camera.CFrame = CFrame.new(camera.CFrame.Position, targetHRP.Position)
+			-- Calculate camera position BEHIND player, LOOKING at target
+			local playerPos = hrp.Position + Vector3.new(0, CAMERA_HEIGHT, 0)
+			
+			-- Direction from player to target
+			local targetDirection = (targetHRP.Position - playerPos).Unit
+			
+			-- Position camera BEHIND player
+			local cameraPos = playerPos - (targetDirection * CAMERA_DISTANCE)
+			
+			-- Make camera look at target
+			local cameraCFrame = CFrame.new(cameraPos, targetHRP.Position)
+			
+			-- Smooth camera movement
+			camera.CFrame = camera.CFrame:Lerp(cameraCFrame, 0.15)
 		else
 			unlockCam()
 		end
