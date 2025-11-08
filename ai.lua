@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On for Jump Showdown & Heroes Battlegrounds
+-- Mobile Lock-On with Advanced Grab/Ragdoll Detection
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -12,14 +12,85 @@ end
 
 local player = Players.LocalPlayer
 local character, humanoid, hrp
+local isDisabled = false
 
 local function setupCharacter(char)
 	character = char
 	humanoid = char:WaitForChild("Humanoid")
 	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+	isDisabled = false
 	
 	if humanoid then 
 		humanoid.AutoRotate = true 
+		
+		-- Detect ragdoll/grab through state changes
+		humanoid.StateChanged:Connect(function(oldState, newState)
+			if newState == Enum.HumanoidStateType.Physics or 
+			   newState == Enum.HumanoidStateType.Ragdoll or
+			   newState == Enum.HumanoidStateType.FallingDown or
+			   newState == Enum.HumanoidStateType.PlatformStanding then
+				isDisabled = true
+			elseif newState == Enum.HumanoidStateType.Running or
+			       newState == Enum.HumanoidStateType.Landed or
+			       newState == Enum.HumanoidStateType.Jumping then
+				isDisabled = false
+			end
+		end)
+		
+		-- Detect PlatformStand changes (common grab method)
+		humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+			if humanoid.PlatformStand then
+				isDisabled = true
+			else
+				isDisabled = false
+			end
+		end)
+		
+		-- Detect Sit changes (some grabs use this)
+		humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+			if humanoid.Sit then
+				isDisabled = true
+			else
+				isDisabled = false
+			end
+		end)
+	end
+	
+	-- Monitor for welds/constraints added to HRP (grab detection)
+	if hrp then
+		hrp.ChildAdded:Connect(function(child)
+			if child:IsA("Weld") or child:IsA("WeldConstraint") or 
+			   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
+			   child:IsA("RopeConstraint") or child:IsA("BodyVelocity") or
+			   child:IsA("BodyPosition") or child:IsA("BodyGyro") then
+				isDisabled = true
+				
+				-- Re-enable when constraint is removed
+				child.AncestryChanged:Connect(function()
+					if not child:IsDescendantOf(game) then
+						task.wait(0.5) -- Small delay to ensure grab ended
+						isDisabled = false
+					end
+				end)
+			end
+		end)
+	end
+	
+	-- Monitor for BallSocketConstraints (RAGDOLL DETECTION!)
+	if character then
+		character.DescendantAdded:Connect(function(desc)
+			if desc:IsA("BallSocketConstraint") then
+				isDisabled = true
+				
+				-- Re-enable when ragdoll ends
+				desc.AncestryChanged:Connect(function()
+					if not desc:IsDescendantOf(game) then
+						task.wait(0.5)
+						isDisabled = false
+					end
+				end)
+			end
+		end)
 	end
 end
 
@@ -46,6 +117,18 @@ btn.Parent = gui
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = btn
+
+-- Status indicator (small)
+local statusDot = Instance.new("Frame")
+statusDot.Size = UDim2.new(0, 8, 0, 8)
+statusDot.Position = UDim2.new(1, -12, 0, 4)
+statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+statusDot.BorderSizePixel = 0
+statusDot.Parent = btn
+
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(0.5, 0)
+dotCorner.Parent = statusDot
 
 -- Draggable
 local dragging, dragInput, dragStart, startPos
@@ -169,38 +252,46 @@ btn.Activated:Connect(function()
 	end
 end)
 
--- SIMPLE & CLEAN: Just check conditions, don't overthink
+-- Update status indicator
+spawn(function()
+	while true do
+		wait(0.1)
+		if isDisabled then
+			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red when disabled
+		else
+			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green when active
+		end
+	end
+end)
+
+-- Rotation loop - INSTANT with no prediction
 RunService.RenderStepped:Connect(function()
 	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
-		-- Check 1: Ragdoll state
-		local state = humanoid:GetState()
-		if state == Enum.HumanoidStateType.Physics or 
-		   state == Enum.HumanoidStateType.Ragdoll then
-			return
+		-- STOP IF ANY GRAB/RAGDOLL DETECTED
+		if isDisabled then
+			return -- Keep lock but don't rotate
 		end
 		
-		-- Check 2: AlignPosition/AlignOrientation (grabs)
-		for _, child in ipairs(hrp:GetChildren()) do
-			if child:IsA("AlignPosition") or child:IsA("AlignOrientation") then
-				return
-			end
+		-- Additional real-time checks
+		if humanoid.PlatformStand or humanoid.Sit then
+			return
 		end
 		
 		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Rotate with pcall (prevents errors, not desync)
-			local success, err = pcall(function()
+			-- Direct instant rotation - no prediction, no smoothing
+			pcall(function()
 				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
 			end)
-			-- If it fails, pcall catches it and we just skip this frame
 		else
 			unlock()
 		end
 	end
 end)
 
-print("Mobile Lock System - Jump Showdown & Heroes BG")
-print("Detects: Ragdoll + AlignPosition ONLY")
+print("Mobile Lock System loaded!")
+print("Features: Lock-On with Advanced Grab/Ragdoll Detection")
+print("Added: BodyVelocity, BodyPosition, BodyGyro detection")
