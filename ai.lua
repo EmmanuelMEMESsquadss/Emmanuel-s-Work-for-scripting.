@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On with Advanced Grab/Ragdoll Detection
+-- Mobile Lock-On + Camlock System
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,6 +11,7 @@ if not UserInputService.TouchEnabled then
 end
 
 local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
 local character, humanoid, hrp
 local isDisabled = false
 
@@ -18,7 +19,6 @@ local function setupCharacter(char)
 	character = char
 	humanoid = char:WaitForChild("Humanoid")
 	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
-	isDisabled = false
 	
 	if humanoid then 
 		humanoid.AutoRotate = true 
@@ -50,8 +50,6 @@ local function setupCharacter(char)
 		humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
 			if humanoid.Sit then
 				isDisabled = true
-			else
-				isDisabled = false
 			end
 		end)
 	end
@@ -61,30 +59,14 @@ local function setupCharacter(char)
 		hrp.ChildAdded:Connect(function(child)
 			if child:IsA("Weld") or child:IsA("WeldConstraint") or 
 			   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
-			   child:IsA("RopeConstraint") or child:IsA("BodyVelocity") or
-			   child:IsA("BodyPosition") or child:IsA("BodyGyro") then
+			   child:IsA("RopeConstraint") then
 				isDisabled = true
 				
-				-- Re-enable when constraint is removed (INSTANT)
+				-- Re-enable when constraint is removed
 				child.AncestryChanged:Connect(function()
 					if not child:IsDescendantOf(game) then
-						isDisabled = false -- Instant recovery
-					end
-				end)
-			end
-		end)
-	end
-	
-	-- Monitor for BallSocketConstraints (RAGDOLL DETECTION!)
-	if character then
-		character.DescendantAdded:Connect(function(desc)
-			if desc:IsA("BallSocketConstraint") then
-				isDisabled = true
-				
-				-- Re-enable when ragdoll ends (INSTANT)
-				desc.AncestryChanged:Connect(function()
-					if not desc:IsDescendantOf(game) then
-						isDisabled = false -- Instant recovery
+						task.wait(0.5)
+						isDisabled = false
 					end
 				end)
 			end
@@ -101,46 +83,77 @@ gui.Name = "LockOnUI"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local btn = Instance.new("TextButton")
-btn.Size = UDim2.new(0, 110, 0, 50)
-btn.Position = UDim2.new(0.06, 0, 0.8, 0)
-btn.Text = "LOCK"
-btn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
-btn.TextColor3 = Color3.new(1, 1, 1)
-btn.Font = Enum.Font.GothamBold
-btn.TextSize = 20
-btn.Active = true
-btn.Parent = gui
+-- Character Lock Button
+local charLockBtn = Instance.new("TextButton")
+charLockBtn.Size = UDim2.new(0, 110, 0, 50)
+charLockBtn.Position = UDim2.new(0.06, 0, 0.8, 0)
+charLockBtn.Text = "CHAR LOCK"
+charLockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+charLockBtn.TextColor3 = Color3.new(1, 1, 1)
+charLockBtn.Font = Enum.Font.GothamBold
+charLockBtn.TextSize = 16
+charLockBtn.Active = true
+charLockBtn.Parent = gui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = btn
+local charCorner = Instance.new("UICorner")
+charCorner.CornerRadius = UDim.new(0, 8)
+charCorner.Parent = charLockBtn
 
--- Status indicator (small)
-local statusDot = Instance.new("Frame")
-statusDot.Size = UDim2.new(0, 8, 0, 8)
-statusDot.Position = UDim2.new(1, -12, 0, 4)
-statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
-statusDot.BorderSizePixel = 0
-statusDot.Parent = btn
+-- Status indicator for character lock
+local charDot = Instance.new("Frame")
+charDot.Size = UDim2.new(0, 8, 0, 8)
+charDot.Position = UDim2.new(1, -12, 0, 4)
+charDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+charDot.BorderSizePixel = 0
+charDot.Parent = charLockBtn
 
-local dotCorner = Instance.new("UICorner")
-dotCorner.CornerRadius = UDim.new(0.5, 0)
-dotCorner.Parent = statusDot
+local charDotCorner = Instance.new("UICorner")
+charDotCorner.CornerRadius = UDim.new(0.5, 0)
+charDotCorner.Parent = charDot
 
--- Draggable
+-- Camlock Button
+local camLockBtn = Instance.new("TextButton")
+camLockBtn.Size = UDim2.new(0, 110, 0, 50)
+camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0) -- Next to character lock
+camLockBtn.Text = "CAM LOCK"
+camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
+camLockBtn.TextColor3 = Color3.new(1, 1, 1)
+camLockBtn.Font = Enum.Font.GothamBold
+camLockBtn.TextSize = 16
+camLockBtn.Active = true
+camLockBtn.Parent = gui
+
+local camCorner = Instance.new("UICorner")
+camCorner.CornerRadius = UDim.new(0, 8)
+camCorner.Parent = camLockBtn
+
+-- Draggable (both buttons move together)
 local dragging, dragInput, dragStart, startPos
 local function updateDrag(input)
 	local delta = input.Position - dragStart
-	btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+	charLockBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	camLockBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X + 120,
 		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
-btn.InputBegan:Connect(function(input)
+charLockBtn.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = true
 		dragStart = input.Position
-		startPos = btn.Position
+		startPos = charLockBtn.Position
+		dragInput = input
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
+end)
+
+camLockBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = charLockBtn.Position
 		dragInput = input
 		input.Changed:Connect(function()
 			if input.UserInputState == Enum.UserInputState.End then dragging = false end
@@ -154,7 +167,8 @@ end)
 
 -- Lock state
 local MAX_DIST = 100
-local lockTarget, lockBillboard
+local charLockTarget, camLockTarget
+local lockBillboard
 
 local function detachBillboard()
 	if lockBillboard then
@@ -163,7 +177,7 @@ local function detachBillboard()
 	end
 end
 
-local function attachBillboard(model)
+local function attachBillboard(model, color)
 	detachBillboard()
 	local targetHrp = model:FindFirstChild("HumanoidRootPart")
 	if not targetHrp then return end
@@ -178,7 +192,7 @@ local function attachBillboard(model)
 	label.Text = "LOCKED"
 	label.TextScaled = true
 	label.Font = Enum.Font.GothamBold
-	label.TextColor3 = Color3.fromRGB(255, 80, 80)
+	label.TextColor3 = color
 	label.Parent = bb
 	lockBillboard = bb
 end
@@ -220,30 +234,60 @@ local function getNearestTarget()
 	return nearest
 end
 
-local function unlock()
-	lockTarget = nil
-	detachBillboard()
+local function unlockChar()
+	charLockTarget = nil
 	if humanoid then humanoid.AutoRotate = true end
-	btn.Text = "LOCK"
-	btn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+	charLockBtn.Text = "CHAR LOCK"
+	charLockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+	if not camLockTarget then detachBillboard() end
 end
 
-btn.Activated:Connect(function()
-	if lockTarget then
-		unlock()
+local function unlockCam()
+	camLockTarget = nil
+	camLockBtn.Text = "CAM LOCK"
+	camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
+	if not charLockTarget then detachBillboard() end
+end
+
+-- Character Lock Button
+charLockBtn.Activated:Connect(function()
+	if charLockTarget then
+		unlockChar()
 	else
 		local t = getNearestTarget()
 		if t then
-			lockTarget = t
+			charLockTarget = t
 			if humanoid then humanoid.AutoRotate = false end
-			attachBillboard(t)
-			btn.Text = "UNLOCK"
-			btn.BackgroundColor3 = Color3.fromRGB(206, 36, 36)
+			attachBillboard(t, Color3.fromRGB(255, 80, 80))
+			charLockBtn.Text = "UNLOCK"
+			charLockBtn.BackgroundColor3 = Color3.fromRGB(206, 36, 36)
 		else
-			btn.Text = "NO TARGET"
+			charLockBtn.Text = "NO TARGET"
 			task.delay(1, function()
-				if not lockTarget then 
-					btn.Text = "LOCK" 
+				if not charLockTarget then 
+					charLockBtn.Text = "CHAR LOCK" 
+				end
+			end)
+		end
+	end
+end)
+
+-- Camlock Button
+camLockBtn.Activated:Connect(function()
+	if camLockTarget then
+		unlockCam()
+	else
+		local t = getNearestTarget()
+		if t then
+			camLockTarget = t
+			attachBillboard(t, Color3.fromRGB(80, 255, 80))
+			camLockBtn.Text = "UNLOCK"
+			camLockBtn.BackgroundColor3 = Color3.fromRGB(36, 206, 36)
+		else
+			camLockBtn.Text = "NO TARGET"
+			task.delay(1, function()
+				if not camLockTarget then 
+					camLockBtn.Text = "CAM LOCK" 
 				end
 			end)
 		end
@@ -255,41 +299,50 @@ spawn(function()
 	while true do
 		wait(0.1)
 		if isDisabled then
-			statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80) -- Red when disabled
+			charDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 		else
-			statusDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100) -- Green when active
+			charDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
 		end
 	end
 end)
 
--- Rotation loop - INSTANT with no prediction
+-- Character Rotation loop (ORIGINAL)
 RunService.RenderStepped:Connect(function()
-	if lockTarget and hrp and humanoid and humanoid.Health > 0 then
-		-- STOP IF ANY GRAB/RAGDOLL DETECTED
+	if charLockTarget and hrp and humanoid and humanoid.Health > 0 then
 		if isDisabled then
-			return -- Keep lock but don't rotate
+			return
 		end
 		
-		-- Additional real-time checks
 		if humanoid.PlatformStand or humanoid.Sit then
 			return
 		end
 		
-		local targetHRP = lockTarget:FindFirstChild("HumanoidRootPart")
-		local targetHum = lockTarget:FindFirstChildWhichIsA("Humanoid")
+		local targetHRP = charLockTarget:FindFirstChild("HumanoidRootPart")
+		local targetHum = charLockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Direct instant rotation - no prediction, no smoothing
-			pcall(function()
-				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
-			end)
+			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
 		else
-			unlock()
+			unlockChar()
 		end
 	end
 end)
 
-print("Mobile Lock System loaded!")
-print("Features: Lock-On with Advanced Grab/Ragdoll Detection")
-print("NEW: BallSocketConstraint detection for instant ragdoll detection!")
+-- Camera Lock loop (NEW)
+RunService.RenderStepped:Connect(function()
+	if camLockTarget and camera then
+		local targetHRP = camLockTarget:FindFirstChild("HumanoidRootPart")
+		local targetHum = camLockTarget:FindFirstChildWhichIsA("Humanoid")
+		
+		if targetHRP and targetHum and targetHum.Health > 0 then
+			-- Lock camera to target
+			camera.CFrame = CFrame.new(camera.CFrame.Position, targetHRP.Position)
+		else
+			unlockCam()
+		end
+	end
+end)
+
+print("Mobile Lock System + Camlock loaded!")
+print("CHAR LOCK = Rotates character | CAM LOCK = Locks camera")
