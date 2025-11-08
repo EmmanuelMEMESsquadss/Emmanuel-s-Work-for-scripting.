@@ -65,11 +65,10 @@ local function setupCharacter(char)
 			   child:IsA("BodyPosition") or child:IsA("BodyGyro") then
 				isDisabled = true
 				
-				-- Re-enable when constraint is removed
+				-- Re-enable when constraint is removed (INSTANT)
 				child.AncestryChanged:Connect(function()
 					if not child:IsDescendantOf(game) then
-						task.wait(0.5) -- Small delay to ensure grab ended
-						isDisabled = false
+						isDisabled = false -- Instant recovery
 					end
 				end)
 			end
@@ -82,11 +81,10 @@ local function setupCharacter(char)
 			if desc:IsA("BallSocketConstraint") then
 				isDisabled = true
 				
-				-- Re-enable when ragdoll ends
+				-- Re-enable when ragdoll ends (INSTANT)
 				desc.AncestryChanged:Connect(function()
 					if not desc:IsDescendantOf(game) then
-						task.wait(0.5)
-						isDisabled = false
+						isDisabled = false -- Instant recovery
 					end
 				end)
 			end
@@ -294,4 +292,4 @@ end)
 
 print("Mobile Lock System loaded!")
 print("Features: Lock-On with Advanced Grab/Ragdoll Detection")
-print("Added: BodyVelocity, BodyPosition, BodyGyro detection")
+print("NEW: BallSocketConstraint detection for instant ragdoll detection!")
