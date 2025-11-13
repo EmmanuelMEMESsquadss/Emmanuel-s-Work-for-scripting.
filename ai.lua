@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On + Camlock System
+-- Mobile Lock-On + Camlock V1 & V2 System
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -19,6 +19,7 @@ local function setupCharacter(char)
 	character = char
 	humanoid = char:WaitForChild("Humanoid")
 	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+	isDisabled = false
 	
 	if humanoid then 
 		humanoid.AutoRotate = true 
@@ -50,6 +51,8 @@ local function setupCharacter(char)
 		humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
 			if humanoid.Sit then
 				isDisabled = true
+			else
+				isDisabled = false
 			end
 		end)
 	end
@@ -114,7 +117,7 @@ charDotCorner.Parent = charDot
 -- Camlock Button
 local camLockBtn = Instance.new("TextButton")
 camLockBtn.Size = UDim2.new(0, 110, 0, 50)
-camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0) -- Next to character lock
+camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0)
 camLockBtn.Text = "CAM LOCK"
 camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
 camLockBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -127,13 +130,31 @@ local camCorner = Instance.new("UICorner")
 camCorner.CornerRadius = UDim.new(0, 8)
 camCorner.Parent = camLockBtn
 
--- Draggable (both buttons move together)
+-- Camlock V2 Button (STRAFE MODE)
+local camLockV2Btn = Instance.new("TextButton")
+camLockV2Btn.Size = UDim2.new(0, 110, 0, 50)
+camLockV2Btn.Position = UDim2.new(0.06, 240, 0.8, 0)
+camLockV2Btn.Text = "CAM V2"
+camLockV2Btn.BackgroundColor3 = Color3.fromRGB(36, 206, 137)
+camLockV2Btn.TextColor3 = Color3.new(1, 1, 1)
+camLockV2Btn.Font = Enum.Font.GothamBold
+camLockV2Btn.TextSize = 16
+camLockV2Btn.Active = true
+camLockV2Btn.Parent = gui
+
+local camV2Corner = Instance.new("UICorner")
+camV2Corner.CornerRadius = UDim.new(0, 8)
+camV2Corner.Parent = camLockV2Btn
+
+-- Draggable (all three buttons move together)
 local dragging, dragInput, dragStart, startPos
 local function updateDrag(input)
 	local delta = input.Position - dragStart
 	charLockBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
 		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 	camLockBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X + 120,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	camLockV2Btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X + 240,
 		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
@@ -161,13 +182,25 @@ camLockBtn.InputBegan:Connect(function(input)
 	end
 end)
 
+camLockV2Btn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = charLockBtn.Position
+		dragInput = input
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
+end)
+
 UserInputService.InputChanged:Connect(function(input)
 	if dragging and input == dragInput then updateDrag(input) end
 end)
 
 -- Lock state
 local MAX_DIST = 100
-local charLockTarget, camLockTarget
+local charLockTarget, camLockTarget, camLockV2Target
 local lockBillboard
 
 local function detachBillboard()
@@ -239,19 +272,32 @@ local function unlockChar()
 	if humanoid then humanoid.AutoRotate = true end
 	charLockBtn.Text = "CHAR LOCK"
 	charLockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
-	if not camLockTarget then detachBillboard() end
+	if not camLockTarget and not camLockV2Target then detachBillboard() end
 end
 
 local function unlockCam()
 	camLockTarget = nil
 	camLockBtn.Text = "CAM LOCK"
 	camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
-	if not charLockTarget then detachBillboard() end
-	-- Restore camera to normal
+	if not charLockTarget and not camLockV2Target then detachBillboard() end
 	if camera then
 		camera.CameraType = Enum.CameraType.Custom
 		if humanoid then
 			camera.CameraSubject = humanoid
+		end
+	end
+end
+
+local function unlockCamV2()
+	camLockV2Target = nil
+	camLockV2Btn.Text = "CAM V2"
+	camLockV2Btn.BackgroundColor3 = Color3.fromRGB(36, 206, 137)
+	if not charLockTarget and not camLockTarget then detachBillboard() end
+	if camera then
+		camera.CameraType = Enum.CameraType.Custom
+		if humanoid then
+			camera.CameraSubject = humanoid
+			humanoid.AutoRotate = true
 		end
 	end
 end
@@ -301,6 +347,29 @@ camLockBtn.Activated:Connect(function()
 	end
 end)
 
+-- Camlock V2 Button (STRAFE MODE)
+camLockV2Btn.Activated:Connect(function()
+	if camLockV2Target then
+		unlockCamV2()
+	else
+		local t = getNearestTarget()
+		if t then
+			camLockV2Target = t
+			if humanoid then humanoid.AutoRotate = false end
+			attachBillboard(t, Color3.fromRGB(80, 255, 255))
+			camLockV2Btn.Text = "UNLOCK"
+			camLockV2Btn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+		else
+			camLockV2Btn.Text = "NO TARGET"
+			task.delay(1, function()
+				if not camLockV2Target then 
+					camLockV2Btn.Text = "CAM V2" 
+				end
+			end)
+		end
+	end
+end)
+
 -- Update status indicator
 spawn(function()
 	while true do
@@ -328,53 +397,83 @@ RunService.RenderStepped:Connect(function()
 		local targetHum = charLockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+			pcall(function()
+				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+			end)
 		else
 			unlockChar()
 		end
 	end
 end)
 
--- Camera Lock loop (CONSOLE-STYLE - FORCED OVERRIDE!)
+-- CRITICAL: Force camera type EVERY FRAME (Heartbeat)
+RunService.Heartbeat:Connect(function()
+	if camLockTarget or camLockV2Target then
+		camera.CameraType = Enum.CameraType.Scriptable
+	elseif camera.CameraType == Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Custom
+		if humanoid then
+			camera.CameraSubject = humanoid
+		end
+	end
+end)
+
+-- Camera Lock loop (CONSOLE-STYLE - Normal camlock)
 local CAMERA_DISTANCE = 15
 local CAMERA_HEIGHT = 3
 
 RunService.RenderStepped:Connect(function()
 	if camLockTarget and camera and hrp and humanoid then
-		-- FORCE camera to scriptable EVERY FRAME (prevents default camera from taking over)
-		camera.CameraType = Enum.CameraType.Scriptable
-		
 		local targetHRP = camLockTarget:FindFirstChild("HumanoidRootPart")
 		local targetHum = camLockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
-			-- Get player position
 			local playerPos = hrp.Position + Vector3.new(0, CAMERA_HEIGHT, 0)
-			
-			-- Calculate direction from player to target
 			local directionToTarget = (targetHRP.Position - playerPos).Unit
-			
-			-- Position camera BEHIND player
 			local cameraPosition = playerPos - (directionToTarget * CAMERA_DISTANCE)
-			
-			-- Point camera at target
 			local targetLook = CFrame.new(cameraPosition, targetHRP.Position)
-			
-			-- Smooth transition
 			camera.CFrame = camera.CFrame:Lerp(targetLook, 0.2)
 		else
 			unlockCam()
 		end
 	end
-	
-	-- Force restore when not locked (prevent camera from staying scriptable)
-	if not camLockTarget and camera.CameraType == Enum.CameraType.Scriptable then
-		camera.CameraType = Enum.CameraType.Custom
-		camera.CameraSubject = humanoid
+end)
+
+-- Camera Lock V2 loop (STRAFE MODE - Character rotates with movement!)
+local CAMERA_DISTANCE_V2 = 15
+local CAMERA_HEIGHT_V2 = 3
+
+RunService.RenderStepped:Connect(function()
+	if camLockV2Target and camera and hrp and humanoid then
+		local targetHRP = camLockV2Target:FindFirstChild("HumanoidRootPart")
+		local targetHum = camLockV2Target:FindFirstChildWhichIsA("Humanoid")
+		
+		if targetHRP and targetHum and targetHum.Health > 0 then
+			-- Camera position (same as normal camlock)
+			local playerPos = hrp.Position + Vector3.new(0, CAMERA_HEIGHT_V2, 0)
+			local directionToTarget = (targetHRP.Position - playerPos).Unit
+			local cameraPosition = playerPos - (directionToTarget * CAMERA_DISTANCE_V2)
+			local targetLook = CFrame.new(cameraPosition, targetHRP.Position)
+			camera.CFrame = camera.CFrame:Lerp(targetLook, 0.2)
+			
+			-- CHARACTER ROTATION based on MOVEMENT DIRECTION (KEY FEATURE!)
+			local moveDirection = humanoid.MoveDirection
+			if moveDirection.Magnitude > 0.1 then
+				-- Character faces the direction they're moving (side dash rotates character!)
+				local moveCFrame = CFrame.new(hrp.Position, hrp.Position + moveDirection)
+				hrp.CFrame = CFrame.new(hrp.Position) * (moveCFrame - moveCFrame.Position)
+			else
+				-- When standing still, face the target
+				local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+				hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+			end
+		else
+			unlockCamV2()
+		end
 	end
 end)
 
-print("Mobile Lock System + Console Camlock loaded!")
-print("CHAR LOCK = Rotates character | CAM LOCK = Console-style camera")
-print("Camlock keeps YOU in frame while looking at target!")
+print("Mobile Lock System + Camlock V1 & V2 loaded!")
+print("CHAR LOCK = Character rotation | CAM LOCK = Console camera")
+print("CAM V2 = STRAFE MODE - Move any direction while camera locked!")
