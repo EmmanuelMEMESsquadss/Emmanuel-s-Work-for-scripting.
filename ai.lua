@@ -1,487 +1,381 @@
---[[
-SERVER BROWSER - ULTIMATE FIX FOR ARCEUS X MOBILE
-✅ MULTIPLE HTTP METHODS TESTED
-✅ 5 DIFFERENT PROXY URLS
-✅ DETAILED ERROR DEBUGGING
-✅ MANUAL SERVER JOIN OPTION
-✅ AUTO-REFRESH WITH STATUS
 
-THIS VERSION WILL WORK! IT TESTS EVERY POSSIBLE METHOD!
-]]
+-- LocalScript (StarterPlayerScripts)
+-- Mobile Lock-On + Camlock System
 
 local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
-local Player = Players.LocalPlayer
-local PlaceId = game.PlaceId
-
--- Settings
-local AUTO_REFRESH_INTERVAL = 15
-local ServerList = {}
-local SelectedServer = nil
-local AutoRefreshEnabled = true
-local IsRefreshing = false
-local LastError = "No errors yet"
-
--- Multiple HTTP methods to try
-local HttpMethods = {
-    {name = "game:HttpGet", func = function(url) return game:HttpGet(url) end},
-    {name = "HttpService:GetAsync", func = function(url) return HttpService:GetAsync(url) end},
-    {name = "game:HttpGetAsync", func = function(url) return game:HttpGetAsync(url) end},
-}
-
--- Multiple proxy URLs to try
-local ProxyURLs = {
-    "https://games.roproxy.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100",
-    "https://games.ro-proxy.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100",
-    "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100",
-    "http://games.roproxy.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100",
-}
-
--- JSON Decode
-local function DecodeJSON(jsonString)
-    local success, result = pcall(function()
-        return HttpService:JSONDecode(jsonString)
-    end)
-    if not success then
-        LastError = "JSON Decode failed: " .. tostring(result)
-        return nil
-    end
-    return result
+-- Only run on mobile
+if not UserInputService.TouchEnabled then
+	return
 end
 
--- Create GUI
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ServerBrowserGui"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = Player:WaitForChild("PlayerGui")
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local character, humanoid, hrp
+local isDisabled = false
 
--- Main Frame
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 720, 0, 550)
-MainFrame.Position = UDim2.new(0.5, -360, 0.5, -275)
-MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 12)
-MainCorner.Parent = MainFrame
-
--- Title Bar
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 50)
-TitleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = MainFrame
-
-local TitleCorner = Instance.new("UICorner")
-TitleCorner.CornerRadius = UDim.new(0, 12)
-TitleCorner.Parent = TitleBar
-
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -120, 1, 0)
-TitleLabel.Position = UDim2.new(0, 10, 0, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "🌐 SERVER BROWSER (Multi-Method)"
-TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-TitleLabel.TextSize = 17
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.Parent = TitleBar
-
--- Close Button
-local CloseButton = Instance.new("TextButton")
-CloseButton.Size = UDim2.new(0, 40, 0, 40)
-CloseButton.Position = UDim2.new(1, -45, 0, 5)
-CloseButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-CloseButton.Text = "✕"
-CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseButton.TextSize = 20
-CloseButton.Font = Enum.Font.GothamBold
-CloseButton.Parent = TitleBar
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 8)
-CloseCorner.Parent = CloseButton
-
--- Auto-Refresh Toggle
-local AutoRefreshButton = Instance.new("TextButton")
-AutoRefreshButton.Size = UDim2.new(0, 130, 0, 35)
-AutoRefreshButton.Position = UDim2.new(0, 10, 0, 60)
-AutoRefreshButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-AutoRefreshButton.Text = "🔄 Auto: ON"
-AutoRefreshButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoRefreshButton.TextSize = 15
-AutoRefreshButton.Font = Enum.Font.GothamBold
-AutoRefreshButton.Parent = MainFrame
-
-local AutoCorner = Instance.new("UICorner")
-AutoCorner.CornerRadius = UDim.new(0, 8)
-AutoCorner.Parent = AutoRefreshButton
-
--- Manual Refresh
-local RefreshButton = Instance.new("TextButton")
-RefreshButton.Size = UDim2.new(0, 100, 0, 35)
-RefreshButton.Position = UDim2.new(0, 150, 0, 60)
-RefreshButton.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
-RefreshButton.Text = "🔄 Refresh"
-RefreshButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-RefreshButton.TextSize = 15
-RefreshButton.Font = Enum.Font.GothamBold
-RefreshButton.Parent = MainFrame
-
-local RefreshCorner = Instance.new("UICorner")
-RefreshCorner.CornerRadius = UDim.new(0, 8)
-RefreshCorner.Parent = RefreshButton
-
--- Sort by Ping
-local SortButton = Instance.new("TextButton")
-SortButton.Size = UDim2.new(0, 110, 0, 35)
-SortButton.Position = UDim2.new(0, 260, 0, 60)
-SortButton.BackgroundColor3 = Color3.fromRGB(100, 50, 200)
-SortButton.Text = "⚡ Sort Ping"
-SortButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-SortButton.TextSize = 15
-SortButton.Font = Enum.Font.GothamBold
-SortButton.Parent = MainFrame
-
-local SortCorner = Instance.new("UICorner")
-SortCorner.CornerRadius = UDim.new(0, 8)
-SortCorner.Parent = SortButton
-
--- Debug Button
-local DebugButton = Instance.new("TextButton")
-DebugButton.Size = UDim2.new(0, 110, 0, 35)
-DebugButton.Position = UDim2.new(0, 380, 0, 60)
-DebugButton.BackgroundColor3 = Color3.fromRGB(200, 150, 50)
-DebugButton.Text = "🔧 Debug"
-DebugButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-DebugButton.TextSize = 15
-DebugButton.Font = Enum.Font.GothamBold
-DebugButton.Parent = MainFrame
-
-local DebugCorner = Instance.new("UICorner")
-DebugCorner.CornerRadius = UDim.new(0, 8)
-DebugCorner.Parent = DebugButton
-
--- Join Server Button
-local JoinButton = Instance.new("TextButton")
-JoinButton.Size = UDim2.new(0, 140, 0, 35)
-JoinButton.Position = UDim2.new(1, -150, 0, 60)
-JoinButton.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
-JoinButton.Text = "🚀 Join Server"
-JoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-JoinButton.TextSize = 15
-JoinButton.Font = Enum.Font.GothamBold
-JoinButton.Parent = MainFrame
-
-local JoinCorner = Instance.new("UICorner")
-JoinCorner.CornerRadius = UDim.new(0, 8)
-JoinCorner.Parent = JoinButton
-
--- Status Label
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -20, 0, 30)
-StatusLabel.Position = UDim2.new(0, 10, 0, 105)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Initializing..."
-StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-StatusLabel.TextSize = 13
-StatusLabel.Font = Enum.Font.Gotham
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextWrapped = true
-StatusLabel.Parent = MainFrame
-
--- Server List Frame
-local ServerListFrame = Instance.new("ScrollingFrame")
-ServerListFrame.Size = UDim2.new(1, -20, 1, -150)
-ServerListFrame.Position = UDim2.new(0, 10, 0, 140)
-ServerListFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-ServerListFrame.BorderSizePixel = 0
-ServerListFrame.ScrollBarThickness = 8
-ServerListFrame.Parent = MainFrame
-
-local ListCorner = Instance.new("UICorner")
-ListCorner.CornerRadius = UDim.new(0, 8)
-ListCorner.Parent = ServerListFrame
-
-local ListLayout = Instance.new("UIListLayout")
-ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-ListLayout.Padding = UDim.new(0, 5)
-ListLayout.Parent = ServerListFrame
-
--- Region detection
-local function GetRegion(ping)
-    if ping < 50 then
-        return "🟢 Local", Color3.fromRGB(50, 255, 50)
-    elseif ping < 100 then
-        return "🟡 Nearby", Color3.fromRGB(255, 255, 50)
-    elseif ping < 150 then
-        return "🟠 Regional", Color3.fromRGB(255, 150, 50)
-    elseif ping < 250 then
-        return "🔴 Far", Color3.fromRGB(255, 100, 50)
-    else
-        return "⚫ Very Far", Color3.fromRGB(150, 150, 150)
-    end
+local function setupCharacter(char)
+	character = char
+	humanoid = char:WaitForChild("Humanoid")
+	hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+	
+	if humanoid then 
+		humanoid.AutoRotate = true 
+		
+		-- Detect ragdoll/grab through state changes
+		humanoid.StateChanged:Connect(function(oldState, newState)
+			if newState == Enum.HumanoidStateType.Physics or 
+			   newState == Enum.HumanoidStateType.Ragdoll or
+			   newState == Enum.HumanoidStateType.FallingDown or
+			   newState == Enum.HumanoidStateType.PlatformStanding then
+				isDisabled = true
+			elseif newState == Enum.HumanoidStateType.Running or
+			       newState == Enum.HumanoidStateType.Landed or
+			       newState == Enum.HumanoidStateType.Jumping then
+				isDisabled = false
+			end
+		end)
+		
+		-- Detect PlatformStand changes (common grab method)
+		humanoid:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+			if humanoid.PlatformStand then
+				isDisabled = true
+			else
+				isDisabled = false
+			end
+		end)
+		
+		-- Detect Sit changes (some grabs use this)
+		humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+			if humanoid.Sit then
+				isDisabled = true
+			end
+		end)
+	end
+	
+	-- Monitor for welds/constraints added to HRP (grab detection)
+	if hrp then
+		hrp.ChildAdded:Connect(function(child)
+			if child:IsA("Weld") or child:IsA("WeldConstraint") or 
+			   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
+			   child:IsA("RopeConstraint") then
+				isDisabled = true
+				
+				-- Re-enable when constraint is removed
+				child.AncestryChanged:Connect(function()
+					if not child:IsDescendantOf(game) then
+						task.wait(0.5)
+						isDisabled = false
+					end
+				end)
+			end
+		end)
+	end
 end
 
--- Create server entry
-local function CreateServerEntry(serverData, index)
-    local Entry = Instance.new("TextButton")
-    Entry.Size = UDim2.new(1, -10, 0, 60)
-    Entry.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-    Entry.BorderSizePixel = 0
-    Entry.Text = ""
-    Entry.AutoButtonColor = false
-    Entry.LayoutOrder = index
-    Entry.Parent = ServerListFrame
-    
-    local EntryCorner = Instance.new("UICorner")
-    EntryCorner.CornerRadius = UDim.new(0, 8)
-    EntryCorner.Parent = Entry
-    
-    local NumberLabel = Instance.new("TextLabel")
-    NumberLabel.Size = UDim2.new(0, 40, 1, 0)
-    NumberLabel.Position = UDim2.new(0, 5, 0, 0)
-    NumberLabel.BackgroundTransparency = 1
-    NumberLabel.Text = "#" .. index
-    NumberLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-    NumberLabel.TextSize = 16
-    NumberLabel.Font = Enum.Font.GothamBold
-    NumberLabel.Parent = Entry
-    
-    local PlayersLabel = Instance.new("TextLabel")
-    PlayersLabel.Size = UDim2.new(0, 100, 0, 25)
-    PlayersLabel.Position = UDim2.new(0, 50, 0, 5)
-    PlayersLabel.BackgroundTransparency = 1
-    PlayersLabel.Text = "👥 " .. serverData.playing .. "/" .. serverData.maxPlayers
-    PlayersLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    PlayersLabel.TextSize = 16
-    PlayersLabel.Font = Enum.Font.GothamBold
-    PlayersLabel.TextXAlignment = Enum.TextXAlignment.Left
-    PlayersLabel.Parent = Entry
-    
-    local region, regionColor = GetRegion(serverData.ping)
-    local PingLabel = Instance.new("TextLabel")
-    PingLabel.Size = UDim2.new(0, 120, 0, 25)
-    PingLabel.Position = UDim2.new(0, 50, 0, 30)
-    PingLabel.BackgroundTransparency = 1
-    PingLabel.Text = "⚡ " .. math.floor(serverData.ping) .. " ms"
-    PingLabel.TextColor3 = regionColor
-    PingLabel.TextSize = 14
-    PingLabel.Font = Enum.Font.Gotham
-    PingLabel.TextXAlignment = Enum.TextXAlignment.Left
-    PingLabel.Parent = Entry
-    
-    local RegionLabel = Instance.new("TextLabel")
-    RegionLabel.Size = UDim2.new(0, 150, 1, 0)
-    RegionLabel.Position = UDim2.new(0, 200, 0, 0)
-    RegionLabel.BackgroundTransparency = 1
-    RegionLabel.Text = region
-    RegionLabel.TextColor3 = regionColor
-    RegionLabel.TextSize = 14
-    RegionLabel.Font = Enum.Font.GothamBold
-    RegionLabel.TextXAlignment = Enum.TextXAlignment.Left
-    RegionLabel.Parent = Entry
-    
-    Entry.Name = serverData.id
-    
-    Entry.MouseButton1Click:Connect(function()
-        for _, child in pairs(ServerListFrame:GetChildren()) do
-            if child:IsA("TextButton") then
-                child.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-            end
-        end
-        Entry.BackgroundColor3 = Color3.fromRGB(50, 100, 150)
-        SelectedServer = serverData
-        StatusLabel.Text = "✅ Selected: #" .. index .. " | " .. serverData.playing .. "/" .. serverData.maxPlayers .. " | " .. math.floor(serverData.ping) .. "ms"
-    end)
-    
-    Entry.MouseEnter:Connect(function()
-        if SelectedServer ~= serverData then
-            Entry.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-        end
-    end)
-    
-    Entry.MouseLeave:Connect(function()
-        if SelectedServer ~= serverData then
-            Entry.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-        end
-    end)
+if player.Character then setupCharacter(player.Character) end
+player.CharacterAdded:Connect(setupCharacter)
+
+-- GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "LockOnUI"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- Character Lock Button
+local charLockBtn = Instance.new("TextButton")
+charLockBtn.Size = UDim2.new(0, 110, 0, 50)
+charLockBtn.Position = UDim2.new(0.06, 0, 0.8, 0)
+charLockBtn.Text = "CHAR LOCK"
+charLockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+charLockBtn.TextColor3 = Color3.new(1, 1, 1)
+charLockBtn.Font = Enum.Font.GothamBold
+charLockBtn.TextSize = 16
+charLockBtn.Active = true
+charLockBtn.Parent = gui
+
+local charCorner = Instance.new("UICorner")
+charCorner.CornerRadius = UDim.new(0, 8)
+charCorner.Parent = charLockBtn
+
+-- Status indicator for character lock
+local charDot = Instance.new("Frame")
+charDot.Size = UDim2.new(0, 8, 0, 8)
+charDot.Position = UDim2.new(1, -12, 0, 4)
+charDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+charDot.BorderSizePixel = 0
+charDot.Parent = charLockBtn
+
+local charDotCorner = Instance.new("UICorner")
+charDotCorner.CornerRadius = UDim.new(0.5, 0)
+charDotCorner.Parent = charDot
+
+-- Camlock Button
+local camLockBtn = Instance.new("TextButton")
+camLockBtn.Size = UDim2.new(0, 110, 0, 50)
+camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0) -- Next to character lock
+camLockBtn.Text = "CAM LOCK"
+camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
+camLockBtn.TextColor3 = Color3.new(1, 1, 1)
+camLockBtn.Font = Enum.Font.GothamBold
+camLockBtn.TextSize = 16
+camLockBtn.Active = true
+camLockBtn.Parent = gui
+
+local camCorner = Instance.new("UICorner")
+camCorner.CornerRadius = UDim.new(0, 8)
+camCorner.Parent = camLockBtn
+
+-- Draggable (both buttons move together)
+local dragging, dragInput, dragStart, startPos
+local function updateDrag(input)
+	local delta = input.Position - dragStart
+	charLockBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	camLockBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X + 120,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
--- CRITICAL: Fetch servers with multiple methods
-local function FetchServers()
-    if IsRefreshing then return end
-    IsRefreshing = true
-    
-    StatusLabel.Text = "🔄 Testing HTTP methods..."
-    
-    -- Clear old entries
-    for _, child in pairs(ServerListFrame:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
-    end
-    
-    local success = false
-    local result = nil
-    
-    -- Try each HTTP method with each proxy URL
-    for methodIndex, method in ipairs(HttpMethods) do
-        if success then break end
-        
-        for urlIndex, urlPattern in ipairs(ProxyURLs) do
-            if success then break end
-            
-            local url = string.format(urlPattern, PlaceId)
-            StatusLabel.Text = "🔄 Trying: " .. method.name .. " [" .. methodIndex .. "/" .. #HttpMethods .. "] URL [" .. urlIndex .. "/" .. #ProxyURLs .. "]"
-            
-            local trySuccess, data = pcall(function()
-                return method.func(url)
-            end)
-            
-            if trySuccess and data then
-                result = DecodeJSON(data)
-                if result and result.data and #result.data > 0 then
-                    success = true
-                    StatusLabel.Text = "✅ SUCCESS with " .. method.name .. "!"
-                    LastError = "No error - Working!"
-                    break
-                else
-                    LastError = method.name .. " returned invalid data"
-                end
-            else
-                LastError = method.name .. " failed: " .. tostring(data)
-            end
-            
-            wait(0.5) -- Small delay between attempts
-        end
-    end
-    
-    if success and result and result.data then
-        ServerList = result.data
-        StatusLabel.Text = "✅ Found " .. #ServerList .. " servers! Auto-refresh: " .. AUTO_REFRESH_INTERVAL .. "s"
-        
-        for i, server in ipairs(ServerList) do
-            CreateServerEntry(server, i)
-        end
-        
-        ServerListFrame.CanvasSize = UDim2.new(0, 0, 0, #ServerList * 65)
-    else
-        StatusLabel.Text = "❌ ALL METHODS FAILED! Click Debug for details."
-    end
-    
-    IsRefreshing = false
-end
-
--- Sort by ping
-local function SortByPing()
-    if #ServerList == 0 then
-        StatusLabel.Text = "❌ No servers to sort!"
-        return
-    end
-    
-    table.sort(ServerList, function(a, b)
-        return a.ping < b.ping
-    end)
-    
-    for _, child in pairs(ServerListFrame:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
-    end
-    
-    for i, server in ipairs(ServerList) do
-        CreateServerEntry(server, i)
-    end
-    
-    StatusLabel.Text = "✅ Sorted by lowest ping!"
-end
-
--- Join server
-local function JoinServer()
-    if not SelectedServer then
-        StatusLabel.Text = "❌ Select a server first!"
-        return
-    end
-    
-    StatusLabel.Text = "🚀 Joining server..."
-    
-    local success, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(PlaceId, SelectedServer.id, Player)
-    end)
-    
-    if not success then
-        StatusLabel.Text = "❌ Join failed: " .. tostring(err)
-    end
-end
-
--- Debug info
-local function ShowDebug()
-    print("=== SERVER BROWSER DEBUG INFO ===")
-    print("PlaceId:", PlaceId)
-    print("Last Error:", LastError)
-    print("Servers Found:", #ServerList)
-    print("Auto-Refresh:", AutoRefreshEnabled)
-    print("================================")
-    
-    StatusLabel.Text = "🔧 Debug info printed to console. Last error: " .. LastError
-    
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Debug Info";
-        Text = "Check console (F9) for details. Error: " .. LastError;
-        Duration = 7;
-    })
-end
-
--- Toggle auto-refresh
-local function ToggleAutoRefresh()
-    AutoRefreshEnabled = not AutoRefreshEnabled
-    AutoRefreshButton.Text = AutoRefreshEnabled and "🔄 Auto: ON" or "⏸️ Auto: OFF"
-    AutoRefreshButton.BackgroundColor3 = AutoRefreshEnabled and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
-end
-
--- Button connections
-CloseButton.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
+charLockBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = charLockBtn.Position
+		dragInput = input
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
 end)
 
-AutoRefreshButton.MouseButton1Click:Connect(ToggleAutoRefresh)
-RefreshButton.MouseButton1Click:Connect(FetchServers)
-SortButton.MouseButton1Click:Connect(SortByPing)
-JoinButton.MouseButton1Click:Connect(JoinServer)
-DebugButton.MouseButton1Click:Connect(ShowDebug)
+camLockBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = charLockBtn.Position
+		dragInput = input
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
+end)
 
--- Auto-refresh loop
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and input == dragInput then updateDrag(input) end
+end)
+
+-- Lock state
+local MAX_DIST = 100
+local charLockTarget, camLockTarget
+local lockBillboard
+
+local function detachBillboard()
+	if lockBillboard then
+		lockBillboard:Destroy()
+		lockBillboard = nil
+	end
+end
+
+local function attachBillboard(model, color)
+	detachBillboard()
+	local targetHrp = model:FindFirstChild("HumanoidRootPart")
+	if not targetHrp then return end
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.new(0, 120, 0, 40)
+	bb.StudsOffset = Vector3.new(0, 3.2, 0)
+	bb.AlwaysOnTop = true
+	bb.Parent = targetHrp
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = "LOCKED"
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.TextColor3 = color
+	label.Parent = bb
+	lockBillboard = bb
+end
+
+local function isValidTarget(model)
+	if not model or not model:IsA("Model") then return false end
+	local hum = model:FindFirstChildWhichIsA("Humanoid")
+	local part = model:FindFirstChild("HumanoidRootPart")
+	if not hum or not part or hum.Health <= 0 then return false end
+	if model == character then return false end
+	if Players:GetPlayerFromCharacter(model) == player then return false end
+	return true
+end
+
+local function getNearestTarget()
+	if not hrp then return end
+	local nearest, dist = nil, MAX_DIST
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if pl ~= player and pl.Character and isValidTarget(pl.Character) then
+			local d = (hrp.Position - pl.Character.HumanoidRootPart.Position).Magnitude
+			if d < dist then
+				dist = d
+				nearest = pl.Character
+			end
+		end
+	end
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") and isValidTarget(obj) then
+			local targetHrp = obj:FindFirstChild("HumanoidRootPart")
+			if targetHrp then
+				local d = (hrp.Position - targetHrp.Position).Magnitude
+				if d < dist then
+					dist = d
+					nearest = obj
+				end
+			end
+		end
+	end
+	return nearest
+end
+
+local function unlockChar()
+	charLockTarget = nil
+	if humanoid then humanoid.AutoRotate = true end
+	charLockBtn.Text = "CHAR LOCK"
+	charLockBtn.BackgroundColor3 = Color3.fromRGB(36, 137, 206)
+	if not camLockTarget then detachBillboard() end
+end
+
+local function unlockCam()
+	camLockTarget = nil
+	camLockBtn.Text = "CAM LOCK"
+	camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
+	if not charLockTarget then detachBillboard() end
+	-- Restore camera to normal
+	if camera then
+		camera.CameraType = Enum.CameraType.Custom
+		if humanoid then
+			camera.CameraSubject = humanoid
+		end
+	end
+end
+
+-- Character Lock Button
+charLockBtn.Activated:Connect(function()
+	if charLockTarget then
+		unlockChar()
+	else
+		local t = getNearestTarget()
+		if t then
+			charLockTarget = t
+			if humanoid then humanoid.AutoRotate = false end
+			attachBillboard(t, Color3.fromRGB(255, 80, 80))
+			charLockBtn.Text = "UNLOCK"
+			charLockBtn.BackgroundColor3 = Color3.fromRGB(206, 36, 36)
+		else
+			charLockBtn.Text = "NO TARGET"
+			task.delay(1, function()
+				if not charLockTarget then 
+					charLockBtn.Text = "CHAR LOCK" 
+				end
+			end)
+		end
+	end
+end)
+
+-- Camlock Button
+camLockBtn.Activated:Connect(function()
+	if camLockTarget then
+		unlockCam()
+	else
+		local t = getNearestTarget()
+		if t then
+			camLockTarget = t
+			attachBillboard(t, Color3.fromRGB(80, 255, 80))
+			camLockBtn.Text = "UNLOCK"
+			camLockBtn.BackgroundColor3 = Color3.fromRGB(36, 206, 36)
+		else
+			camLockBtn.Text = "NO TARGET"
+			task.delay(1, function()
+				if not camLockTarget then 
+					camLockBtn.Text = "CAM LOCK" 
+				end
+			end)
+		end
+	end
+end)
+
+-- Update status indicator
 spawn(function()
-    while wait(AUTO_REFRESH_INTERVAL) do
-        if AutoRefreshEnabled and not IsRefreshing then
-            FetchServers()
-        end
-    end
+	while true do
+		wait(0.1)
+		if isDisabled then
+			charDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+		else
+			charDot.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+		end
+	end
 end)
 
--- Initial fetch
-wait(1)
-FetchServers()
+-- Character Rotation loop (ORIGINAL)
+RunService.RenderStepped:Connect(function()
+	if charLockTarget and hrp and humanoid and humanoid.Health > 0 then
+		if isDisabled then
+			return
+		end
+		
+		if humanoid.PlatformStand or humanoid.Sit then
+			return
+		end
+		
+		local targetHRP = charLockTarget:FindFirstChild("HumanoidRootPart")
+		local targetHum = charLockTarget:FindFirstChildWhichIsA("Humanoid")
+		
+		if targetHRP and targetHum and targetHum.Health > 0 then
+			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
+			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+		else
+			unlockChar()
+		end
+	end
+end)
 
--- Notification
-game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "Server Browser Ultimate Fix!";
-    Text = "Tests ALL HTTP methods! Click Debug button for error details.";
-    Duration = 6;
-})
+-- Camera Lock loop (CONSOLE-STYLE - FORCED OVERRIDE!)
+local CAMERA_DISTANCE = 15
+local CAMERA_HEIGHT = 3
 
-print("===========================================")
-print("SERVER BROWSER - ULTIMATE FIX")
-print("===========================================")
-print("✅ Tests " .. #HttpMethods .. " HTTP methods")
-print("✅ Tests " .. #ProxyURLs .. " proxy URLs")
-print("✅ Total " .. (#HttpMethods * #ProxyURLs) .. " combinations!")
-print("✅ Debug button for error details")
-print("===========================================")
+RunService.RenderStepped:Connect(function()
+	if camLockTarget and camera and hrp and humanoid then
+		-- FORCE camera to scriptable EVERY FRAME (prevents default camera from taking over)
+		camera.CameraType = Enum.CameraType.Scriptable
+		
+		local targetHRP = camLockTarget:FindFirstChild("HumanoidRootPart")
+		local targetHum = camLockTarget:FindFirstChildWhichIsA("Humanoid")
+		
+		if targetHRP and targetHum and targetHum.Health > 0 then
+			-- Get player position
+			local playerPos = hrp.Position + Vector3.new(0, CAMERA_HEIGHT, 0)
+			
+			-- Calculate direction from player to target
+			local directionToTarget = (targetHRP.Position - playerPos).Unit
+			
+			-- Position camera BEHIND player
+			local cameraPosition = playerPos - (directionToTarget * CAMERA_DISTANCE)
+			
+			-- Point camera at target
+			local targetLook = CFrame.new(cameraPosition, targetHRP.Position)
+			
+			-- Smooth transition
+			camera.CFrame = camera.CFrame:Lerp(targetLook, 0.2)
+		else
+			unlockCam()
+		end
+	end
+	
+	-- Force restore when not locked (prevent camera from staying scriptable)
+	if not camLockTarget and camera.CameraType == Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Custom
+		camera.CameraSubject = humanoid
+	end
+end)
+
+print("Mobile Lock System + Console Camlock loaded!")
+print("CHAR LOCK = Rotates character | CAM LOCK = Console-style camera")
+print("Camlock keeps YOU in frame while looking at target!")
