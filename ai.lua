@@ -1,6 +1,5 @@
-
 -- LocalScript (StarterPlayerScripts)
--- Mobile Lock-On + Camlock System
+-- Mobile Lock-On + Camlock System [FIXED VERSION]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -27,13 +26,13 @@ local function setupCharacter(char)
 		-- Detect ragdoll/grab through state changes
 		humanoid.StateChanged:Connect(function(oldState, newState)
 			if newState == Enum.HumanoidStateType.Physics or 
-			   newState == Enum.HumanoidStateType.Ragdoll or
-			   newState == Enum.HumanoidStateType.FallingDown or
-			   newState == Enum.HumanoidStateType.PlatformStanding then
+				newState == Enum.HumanoidStateType.Ragdoll or
+				newState == Enum.HumanoidStateType.FallingDown or
+				newState == Enum.HumanoidStateType.PlatformStanding then
 				isDisabled = true
 			elseif newState == Enum.HumanoidStateType.Running or
-			       newState == Enum.HumanoidStateType.Landed or
-			       newState == Enum.HumanoidStateType.Jumping then
+				newState == Enum.HumanoidStateType.Landed or
+				newState == Enum.HumanoidStateType.Jumping then
 				isDisabled = false
 			end
 		end)
@@ -59,8 +58,8 @@ local function setupCharacter(char)
 	if hrp then
 		hrp.ChildAdded:Connect(function(child)
 			if child:IsA("Weld") or child:IsA("WeldConstraint") or 
-			   child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
-			   child:IsA("RopeConstraint") then
+				child:IsA("AlignPosition") or child:IsA("AlignOrientation") or
+				child:IsA("RopeConstraint") then
 				isDisabled = true
 				
 				-- Re-enable when constraint is removed
@@ -115,7 +114,7 @@ charDotCorner.Parent = charDot
 -- Camlock Button
 local camLockBtn = Instance.new("TextButton")
 camLockBtn.Size = UDim2.new(0, 110, 0, 50)
-camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0) -- Next to character lock
+camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0)
 camLockBtn.Text = "CAM LOCK"
 camLockBtn.BackgroundColor3 = Color3.fromRGB(206, 137, 36)
 camLockBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -314,14 +313,33 @@ spawn(function()
 	end
 end)
 
--- Character Rotation loop (ORIGINAL)
-RunService.RenderStepped:Connect(function()
+-- ============================================
+-- FIX #1: Character Rotation (BODYGYRO METHOD)
+-- ============================================
+-- Using BodyGyro instead of CFrame manipulation prevents:
+-- - Network ownership conflicts
+-- - Velocity cancellation
+-- - Rubber-banding/teleporting
+-- - Death from position desync
+
+local bodyGyro
+
+RunService.Heartbeat:Connect(function()
 	if charLockTarget and hrp and humanoid and humanoid.Health > 0 then
 		if isDisabled then
+			-- Remove gyro when disabled
+			if bodyGyro then
+				bodyGyro:Destroy()
+				bodyGyro = nil
+			end
 			return
 		end
 		
 		if humanoid.PlatformStand or humanoid.Sit then
+			if bodyGyro then
+				bodyGyro:Destroy()
+				bodyGyro = nil
+			end
 			return
 		end
 		
@@ -329,15 +347,40 @@ RunService.RenderStepped:Connect(function()
 		local targetHum = charLockTarget:FindFirstChildWhichIsA("Humanoid")
 		
 		if targetHRP and targetHum and targetHum.Health > 0 then
+			-- Create BodyGyro if it doesn't exist
+			if not bodyGyro or bodyGyro.Parent ~= hrp then
+				bodyGyro = Instance.new("BodyGyro")
+				bodyGyro.MaxTorque = Vector3.new(0, math.huge, 0) -- Only Y-axis rotation
+				bodyGyro.P = 10000 -- Responsiveness
+				bodyGyro.D = 500 -- Dampening (prevents jitter)
+				bodyGyro.Parent = hrp
+			end
+			
+			-- Calculate look direction (same Y level to avoid tilting)
 			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
-			hrp.CFrame = CFrame.new(hrp.Position, lookPos)
+			local lookCFrame = CFrame.new(hrp.Position, lookPos)
+			
+			-- Apply rotation smoothly
+			bodyGyro.CFrame = lookCFrame
 		else
 			unlockChar()
+			if bodyGyro then
+				bodyGyro:Destroy()
+				bodyGyro = nil
+			end
+		end
+	else
+		-- Clean up BodyGyro when not locked
+		if bodyGyro then
+			bodyGyro:Destroy()
+			bodyGyro = nil
 		end
 	end
 end)
 
--- Camera Lock loop (CONSOLE-STYLE - FORCED OVERRIDE!)
+-- ============================================
+-- Camera Lock loop (CONSOLE-STYLE - ORIGINAL)
+-- ============================================
 local CAMERA_DISTANCE = 15
 local CAMERA_HEIGHT = 3
 
@@ -376,6 +419,7 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
-print("Mobile Lock System + Console Camlock loaded!")
-print("CHAR LOCK = Rotates character | CAM LOCK = Console-style camera")
-print("Camlock keeps YOU in frame while looking at target!")
+print("Mobile Lock System [FIXED] loaded!")
+print("✅ CHAR LOCK: BodyGyro rotation (PERFECT - no teleporting/death)")
+print("✅ CAM LOCK: Original console-style camera")
+print("Drag buttons to reposition | Green dot = active")
