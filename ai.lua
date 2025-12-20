@@ -111,7 +111,147 @@ local charDotCorner = Instance.new("UICorner")
 charDotCorner.CornerRadius = UDim.new(0.5, 0)
 charDotCorner.Parent = charDot
 
--- Camlock Button
+-- Profile Selector Button (+ icon)
+local profileBtn = Instance.new("TextButton")
+profileBtn.Size = UDim2.new(0, 24, 0, 24)
+profileBtn.Position = UDim2.new(0, -30, 0, 13)
+profileBtn.Text = "+"
+profileBtn.BackgroundColor3 = Color3.fromRGB(46, 147, 216)
+profileBtn.TextColor3 = Color3.new(1, 1, 1)
+profileBtn.Font = Enum.Font.GothamBold
+profileBtn.TextSize = 20
+profileBtn.Active = true
+profileBtn.ZIndex = 10 -- Higher than menu
+profileBtn.Parent = charLockBtn
+
+local profileCorner = Instance.new("UICorner")
+profileCorner.CornerRadius = UDim.new(0.5, 0)
+profileCorner.Parent = profileBtn
+
+-- Make sure corner has proper ZIndex too
+profileBtn.ZIndex = 10
+
+-- Profile Menu Container
+local profileMenu = Instance.new("Frame")
+profileMenu.Size = UDim2.new(0, 160, 0, 0) -- Start at 0 height for animation
+profileMenu.Position = UDim2.new(0, -30, 0, 40) -- Position BELOW the + button
+profileMenu.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+profileMenu.BorderSizePixel = 0
+profileMenu.ClipsDescendants = true
+profileMenu.Visible = false
+profileMenu.ZIndex = 5
+profileMenu.Parent = charLockBtn
+
+local menuCorner = Instance.new("UICorner")
+menuCorner.CornerRadius = UDim.new(0, 8)
+menuCorner.Parent = profileMenu
+
+-- Profile options
+local profiles = {
+	{name = "SMOOTH", desc = "Balanced", power = 15000, damping = 300, color = Color3.fromRGB(80, 200, 120)},
+	{name = "SNAP", desc = "Instant", power = 25000, damping = 150, color = Color3.fromRGB(255, 140, 60)},
+	{name = "BUTTER", desc = "Ultra Smooth", power = 12000, damping = 400, color = Color3.fromRGB(100, 180, 255)}
+}
+
+local currentProfile = 1
+local profileButtons = {}
+
+for i, profile in ipairs(profiles) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 35)
+	btn.Position = UDim2.new(0, 5, 0, 5 + (i-1) * 40)
+	btn.BackgroundColor3 = profile.color
+	btn.BackgroundTransparency = 0.2
+	btn.BorderSizePixel = 0
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 13
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Text = profile.name .. " · " .. profile.desc
+	btn.ZIndex = 6 -- Above menu, below profile button
+	btn.Parent = profileMenu
+	
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 6)
+	btnCorner.Parent = btn
+	
+	-- Selection indicator
+	local indicator = Instance.new("Frame")
+	indicator.Size = UDim2.new(0, 4, 1, -6)
+	indicator.Position = UDim2.new(0, 3, 0, 3)
+	indicator.BackgroundColor3 = Color3.new(1, 1, 1)
+	indicator.BorderSizePixel = 0
+	indicator.Visible = (i == 1) -- First profile selected by default
+	indicator.ZIndex = 7 -- Above button
+	indicator.Parent = btn
+	
+	local indCorner = Instance.new("UICorner")
+	indCorner.CornerRadius = UDim.new(1, 0)
+	indCorner.Parent = indicator
+	
+	profileButtons[i] = {button = btn, indicator = indicator, profile = profile}
+	
+	-- Profile selection
+	btn.Activated:Connect(function()
+		currentProfile = i
+		GYRO_POWER = profile.power
+		GYRO_DAMPING = profile.damping
+		
+		-- Update indicators
+		for j, data in ipairs(profileButtons) do
+			data.indicator.Visible = (j == i)
+			-- Smooth color transition
+			game:GetService("TweenService"):Create(data.button, TweenInfo.new(0.2), {
+				BackgroundTransparency = (j == i) and 0.2 or 0.5
+			}):Play()
+		end
+		
+		-- Update existing BodyGyro if active
+		if bodyGyro and bodyGyro.Parent then
+			bodyGyro.P = GYRO_POWER
+			bodyGyro.D = GYRO_DAMPING
+		end
+		
+		-- Visual feedback
+		game:GetService("TweenService"):Create(btn, TweenInfo.new(0.1), {
+			Size = UDim2.new(1, -8, 0, 35)
+		}):Play()
+		task.wait(0.1)
+		game:GetService("TweenService"):Create(btn, TweenInfo.new(0.1), {
+			Size = UDim2.new(1, -10, 0, 35)
+		}):Play()
+	end)
+end
+
+-- Profile toggle animation
+local menuOpen = false
+profileBtn.Activated:Connect(function()
+	menuOpen = not menuOpen
+	
+	local TweenService = game:GetService("TweenService")
+	
+	if menuOpen then
+		profileMenu.Visible = true
+		-- Smooth expand animation
+		TweenService:Create(profileMenu, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Size = UDim2.new(0, 160, 0, 125)
+		}):Play()
+		TweenService:Create(profileBtn, TweenInfo.new(0.2), {
+			Rotation = 45,
+			BackgroundColor3 = Color3.fromRGB(206, 36, 36)
+		}):Play()
+	else
+		-- Smooth collapse animation
+		TweenService:Create(profileMenu, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+			Size = UDim2.new(0, 160, 0, 0)
+		}):Play()
+		TweenService:Create(profileBtn, TweenInfo.new(0.2), {
+			Rotation = 0,
+			BackgroundColor3 = Color3.fromRGB(46, 147, 216)
+		}):Play()
+		task.wait(0.2)
+		profileMenu.Visible = false
+	end
+end)
 local camLockBtn = Instance.new("TextButton")
 camLockBtn.Size = UDim2.new(0, 110, 0, 50)
 camLockBtn.Position = UDim2.new(0.06, 120, 0.8, 0)
@@ -314,15 +454,15 @@ spawn(function()
 end)
 
 -- ============================================
--- FIX #1: Character Rotation (BODYGYRO METHOD)
+-- FIX #1: Character Rotation (BODYGYRO METHOD - PROFILE SYSTEM)
 -- ============================================
--- Using BodyGyro instead of CFrame manipulation prevents:
--- - Network ownership conflicts
--- - Velocity cancellation
--- - Rubber-banding/teleporting
--- - Death from position desync
+-- Dynamic profile switching with smooth animations
 
 local bodyGyro
+
+-- Profile settings (controlled by UI buttons)
+GYRO_POWER = 15000      -- Default: SMOOTH profile
+GYRO_DAMPING = 300
 
 RunService.Heartbeat:Connect(function()
 	if charLockTarget and hrp and humanoid and humanoid.Health > 0 then
@@ -350,18 +490,22 @@ RunService.Heartbeat:Connect(function()
 			-- Create BodyGyro if it doesn't exist
 			if not bodyGyro or bodyGyro.Parent ~= hrp then
 				bodyGyro = Instance.new("BodyGyro")
-				bodyGyro.MaxTorque = Vector3.new(0, math.huge, 0) -- Only Y-axis rotation
-				bodyGyro.P = 10000 -- Responsiveness
-				bodyGyro.D = 500 -- Dampening (prevents jitter)
+				bodyGyro.MaxTorque = Vector3.new(0, math.huge, 0)
+				bodyGyro.P = GYRO_POWER
+				bodyGyro.D = GYRO_DAMPING
 				bodyGyro.Parent = hrp
 			end
 			
-			-- Calculate look direction (same Y level to avoid tilting)
+			-- Calculate look direction
 			local lookPos = Vector3.new(targetHRP.Position.X, hrp.Position.Y, targetHRP.Position.Z)
 			local lookCFrame = CFrame.new(hrp.Position, lookPos)
 			
-			-- Apply rotation smoothly
+			-- Apply rotation
 			bodyGyro.CFrame = lookCFrame
+			
+			-- Apply current profile settings
+			if bodyGyro.P ~= GYRO_POWER then bodyGyro.P = GYRO_POWER end
+			if bodyGyro.D ~= GYRO_DAMPING then bodyGyro.D = GYRO_DAMPING end
 		else
 			unlockChar()
 			if bodyGyro then
@@ -419,7 +563,7 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
-print("Mobile Lock System [FIXED] loaded!")
-print("✅ CHAR LOCK: BodyGyro rotation (PERFECT - no teleporting/death)")
-print("✅ CAM LOCK: Original console-style camera")
-print("Drag buttons to reposition | Green dot = active")
+print("Mobile Lock System [PROFILE SYSTEM] loaded!")
+print("✅ CHAR LOCK: 3 Profiles Available (SMOOTH/SNAP/BUTTER)")
+print("✅ CAM LOCK: Original console-style")
+print("💡 Click [+] button to switch profiles | Drag to reposition")
